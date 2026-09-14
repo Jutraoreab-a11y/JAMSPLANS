@@ -1,0 +1,26 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url("https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@400;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap");
+
+html,
+body {
+  background-color: #f2f0e8;
+  color: #1b1b1d;
+}
+
+* {
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background-color: #1b1b1d;
+  color: #f2f0e8;
+}
+
+/* Focus visible clair pour l'accessibilité clavier */
+:focus-visible {
+  outline: 2px solid #1b1b1d;
+  outline-offset: 2px;
+}
