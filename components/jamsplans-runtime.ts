@@ -879,14 +879,16 @@ export function initJamsPlansApp() {
     if (!wrap) return;
     const alerts = [];
 
-    if (pursuedObjectives.length >= 3){
+    // Seuil relevé à 4 (au lieu de 3) : suivre 3 objectifs de front reste
+    // raisonnable, l'alerte ne se déclenche donc qu'à partir du 4e.
+    if (pursuedObjectives.length >= 4){
       const name = (state.profile.firstName || "").trim();
-      alerts.push(`<p class="limit-alert">Attention${name ? " " + escapeHtml(name) : ""}, tu suis ${pursuedObjectives.length} objectifs à la fois. Ne te disperse pas, il est conseillé de se concentrer sur 1 ou 2 à la fois.</p>`);
+      alerts.push(`<p class="limit-alert">Attention${name ? " " + escapeHtml(name) : ""}, tu suis ${pursuedObjectives.length} objectifs à la fois : concentre-toi sur 1 ou 2 pour ne pas te disperser.</p>`);
     }
 
     const overlaps = findOverlappingObjectivePairs(pursuedObjectives);
     overlaps.forEach(([a,b])=>{
-      alerts.push(`<p class="limit-alert">Les objectifs "${escapeHtml(a.title)}" et "${escapeHtml(b.title)}" se chevauchent (${formatDateRangeFr(a.start_date, a.target_date)} / ${formatDateRangeFr(b.start_date, b.target_date)}).</p>`);
+      alerts.push(`<p class="limit-alert">"${escapeHtml(a.title)}" et "${escapeHtml(b.title)}" se chevauchent.</p>`);
     });
 
     wrap.innerHTML = alerts.join("");
@@ -921,7 +923,7 @@ export function initJamsPlansApp() {
     // Palette vive dédiée au Gantt (indépendante des couleurs de catégorie,
     // plus sobres) : chaque objectif prend une couleur différente pour que
     // la frise soit lisible et vivante d'un coup d'œil.
-    const GANTT_VIVID_PALETTE = ["#FF8C42", "#43B05C", "#FFD23F", "#EC4899"];
+    const GANTT_VIVID_PALETTE = ["#FF7A18", "#22C55E", "#FFC400", "#FF3D9A"];
 
     const rowsHtml = objectives.map((obj, i)=>{
       const s = Math.max(new Date(obj.start_date+"T00:00:00").getTime(), yearStart);
@@ -935,9 +937,9 @@ export function initJamsPlansApp() {
         <div class="gantt-row">
           <div class="gantt-row-label">${escapeHtml(obj.title)}<span class="cat-badge" style="background:${categoryColor(obj.category || "Autre")};">${escapeHtml(obj.category || "Autre")}</span></div>
           <div class="gantt-track">
-            <div class="gantt-bar" style="left:${leftPct}%; width:${widthPct}%; background:${barColor}33;">
+            <div class="gantt-bar" style="left:${leftPct}%; width:${widthPct}%; background:${barColor}59;">
               <div class="gantt-bar-fill" style="width:${pct}%; background:${barColor};"></div>
-              <span class="gantt-bar-pct">${pct}%</span>
+              <span class="gantt-bar-pct" style="color:#fff; text-shadow:0 1px 2px rgba(0,0,0,.7);">${pct}%</span>
             </div>
           </div>
         </div>

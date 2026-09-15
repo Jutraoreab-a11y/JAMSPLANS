@@ -238,7 +238,7 @@
   .gantt-track{position:relative; flex:1; height:20px; background:var(--empty); border-radius:4px;}
   .gantt-bar{position:absolute; top:2px; bottom:2px; border-radius:4px; background:var(--line); overflow:hidden; min-width:2px;}
   .gantt-bar-fill{height:100%; background:linear-gradient(90deg,#4C8FD6,#4CAF6D);}
-  .gantt-bar-pct{position:absolute; top:0; left:6px; font-size:9.5px; line-height:16px; color:var(--ink); mix-blend-mode:difference; filter:invert(1);}
+  .gantt-bar-pct{position:absolute; top:0; left:6px; font-size:10px; font-weight:700; line-height:16px; z-index:1;}
   @media (max-width:520px){
     .gantt-months{padding-left:90px;}
     .gantt-row-label{width:90px;}
