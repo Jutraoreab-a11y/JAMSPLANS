@@ -2476,20 +2476,27 @@ export function initJamsPlansApp() {
   // =========================================================
   // AUTHENTIFICATION (uniquement si Supabase est configuré)
   // =========================================================
-  let authMode = "signin"; // "signin" | "signup"
+  let authMode = "signin"; // "signin" | "signup" | "delete"
 
   document.querySelectorAll("#auth-tabs button").forEach(btn=>{
     btn.addEventListener("click", ()=>{
       authMode = btn.dataset.authMode;
       document.querySelectorAll("#auth-tabs button").forEach(b=>b.classList.remove("active"));
       btn.classList.add("active");
-      document.getElementById("auth-submit").textContent = authMode === "signin" ? "Se connecter" : "Créer un compte";
+      document.getElementById("auth-submit").textContent =
+        authMode === "signin" ? "Se connecter"
+        : authMode === "signup" ? "Créer un compte"
+        : "Supprimer définitivement mon compte";
       document.getElementById("auth-message").textContent = "";
       const isSignup = authMode === "signup";
       document.querySelectorAll(".auth-signup-only").forEach(el=>{
         el.style.display = isSignup ? "block" : "none";
         el.required = isSignup;
       });
+      const isDelete = authMode === "delete";
+      document.querySelectorAll(".auth-delete-only").forEach(el=>{ el.style.display = isDelete ? "flex" : "none"; });
+      const confirmBox = document.getElementById("auth-delete-confirm");
+      if (confirmBox) confirmBox.checked = false;
     });
   });
 
@@ -2502,6 +2509,29 @@ export function initJamsPlansApp() {
     msg.textContent = "";
 
     try {
+      if (authMode === "delete"){
+        if (!document.getElementById("auth-delete-confirm").checked){
+          msg.textContent = "Coche la case de confirmation pour supprimer ton compte.";
+          msg.classList.add("error");
+          return;
+        }
+        // On revérifie le mot de passe ici (même si l'utilisateur est déjà
+        // connecté par ailleurs) pour ne jamais supprimer un compte sans
+        // confirmation explicite des identifiants.
+        const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+        const res = await fetch("/api/delete-account", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: "Bearer " + data.session.access_token },
+        });
+        const body = await res.json().catch(()=>({}));
+        if (!res.ok) throw new Error(body.error || "La suppression du compte a échoué.");
+        await supabaseClient.auth.signOut();
+        msg.textContent = "Compte supprimé définitivement. À bientôt peut-être.";
+        msg.classList.add("success");
+        document.getElementById("auth-form").reset();
+        return;
+      }
       if (authMode === "signin"){
         const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
         if (error) throw error;
