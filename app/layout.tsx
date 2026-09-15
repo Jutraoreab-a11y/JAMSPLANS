@@ -1,9 +1,15 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Carnet de Discipline",
-  description: "Suivi d'objectifs, routines et discipline quotidienne.",
+  title: "JamsPlans",
+  description: "Objectifs, routines et regularite au quotidien.",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({
@@ -13,7 +19,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="fr">
-      <body className="font-sans">{children}</body>
+      <body>{children}</body>
     </html>
   );
 }

@@ -1,4 +1,4 @@
-# Carnet de Discipline — Tracker d'Objectifs & de Planning
+# JamsPlans — Tracker d'Objectifs & de Planning
 
 Application Next.js (App Router) + Supabase pour planifier des routines,
 faire un check-in quotidien et suivre un score de discipline / performance.
@@ -35,19 +35,17 @@ L'app tourne sur http://localhost:3000.
 ## 3. Structure du projet
 
 ```
-supabase/schema.sql        → schéma SQL complet (tables, RLS, vue de couleur)
-lib/types.ts                → types TypeScript alignés sur le schéma
-lib/calculations.ts         → scoring : discipline, performance, streak, couleur
-lib/supabase.ts             → client Supabase
-lib/useAppData.ts           → hook central : fetch + CRUD (objectives/routines/logs)
-components/TabNav.tsx       → navigation des 3 onglets
-components/ObjectivesPlanning.tsx → Onglet 1 : objectifs + routines hebdo
-components/DailyCheckin.tsx       → Onglet 2 : check-in du soir
-components/Dashboard.tsx          → Onglet 3 : calendrier + KPIs + jauge + streak
-app/page.tsx                 → orchestration des onglets
+supabase/schema.sql              → schéma SQL complet (tables, RLS, vue de couleur)
+lib/supabase.ts                  → client Supabase (utilitaire, non utilisé par page.tsx)
+app/jamsplans.css                → CSS de toute l'app (extrait de prototype.html)
+components/jamsplans-markup.ts   → HTML de toute l'app (extrait de prototype.html)
+components/jamsplans-runtime.ts  → logique JS de toute l'app : objectifs, planning,
+                                    agenda, check-in, journée type, dashboard, archive,
+                                    profil, rappels, limites hebdo (extrait de prototype.html)
+app/page.tsx                     → monte le markup + lance jamsplans-runtime au chargement
 ```
 
-## 4. Logique de scoring (lib/calculations.ts)
+## 4. Logique de scoring (components/jamsplans-runtime.ts)
 
 - **Couleur d'un jour** :
   - 🟢 vert : tâche faite ET heures réelles ≥ heures prévues
@@ -78,6 +76,23 @@ réglages du projet Vercel.
 - Édition/suppression d'un check-in déjà enregistré depuis le dashboard
 - Notifications push/email pour rappeler le check-in du soir
 - Export CSV des `daily_logs`
+
+## 0. app/page.tsx = prototype.html, porté dans Next.js
+
+Depuis la mise à jour "JamsPlans", `app/page.tsx` affiche exactement le
+design et le comportement de `prototype.html`, mais branché en vrai sur ce
+projet Next.js :
+
+- `components/jamsplans-markup.ts` contient le HTML de `prototype.html`
+  (extrait tel quel).
+- `components/jamsplans-runtime.ts` contient toute la logique JS de
+  `prototype.html` (extraite telle quelle), adaptée pour lire
+  `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` depuis
+  `.env.local` au lieu des valeurs codées en dur du fichier autonome.
+- `app/jamsplans.css` contient le CSS extrait du même fichier.
+
+`prototype.html` reste disponible à la racine comme référence / bac à
+sable, mais l'app réelle (`npm run dev` puis `/`) est maintenant identique.
 
 ## 7. prototype.html — version autonome branchée sur Supabase
 
