@@ -4,14 +4,12 @@
 -- À exécuter dans l'éditeur SQL de Supabase (Project > SQL Editor)
 -- =========================================================
 
-create extension if not exists "uuid-ossp";
-
 -- ---------------------------------------------------------
 -- TABLE: objectives
 -- Les grands objectifs de l'utilisateur (ex: "Valider le DCG")
 -- ---------------------------------------------------------
 create table if not exists public.objectives (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   title text not null,
   description text,
@@ -34,7 +32,7 @@ comment on table public.objectives is 'Grands objectifs définis par l''utilisat
 -- Les créneaux hebdomadaires récurrents, rattachés à un objectif
 -- ---------------------------------------------------------
 create table if not exists public.routines (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   objective_id uuid not null references public.objectives(id) on delete cascade,
   day_of_week smallint not null check (day_of_week between 0 and 6), -- 0 = dimanche ... 6 = samedi
@@ -60,7 +58,7 @@ comment on table public.routines is 'Créneaux récurrents par jour de la semain
 -- les mêmes règles de non-chevauchement que les blocs de la journée type.
 -- ---------------------------------------------------------
 create table if not exists public.agenda_tasks (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   objective_id uuid references public.objectives(id) on delete set null, -- optionnel
   start_date date not null,
@@ -82,10 +80,15 @@ comment on table public.agenda_tasks is 'Tâches ponctuelles rattachées à une 
 -- TABLE: daily_logs
 -- Le check-in du soir : une ligne par (routine OU tâche d'agenda, date)
 -- ---------------------------------------------------------
-create type public.task_status as enum ('done', 'partial', 'not_done');
+do $$
+begin
+  create type public.task_status as enum ('done', 'partial', 'not_done');
+exception
+  when duplicate_object then null;
+end $$;
 
 create table if not exists public.daily_logs (
-  id uuid primary key default uuid_generate_v4(),
+  id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   routine_id uuid references public.routines(id) on delete set null,
   agenda_task_id uuid references public.agenda_tasks(id) on delete set null,
