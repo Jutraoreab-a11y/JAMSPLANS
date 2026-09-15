@@ -367,7 +367,7 @@ export function initJamsPlansApp() {
     dashboardRange: "week",
     dashboardYear: new Date().getFullYear(),
     dashboardMonth: new Date().getMonth(), // 0-11
-    reminder: { enabled: false, time: "20:00", phone: "", timezone: "Europe/Paris", webhookUrl: "", channelEmail: true, channelSms: false },
+    reminder: { enabled: false, time: "20:00", timezone: "Europe/Paris", webhookUrl: "", channelEmail: true, channelSms: false },
     weeklyLimits: SUPABASE_CONFIGURED ? {} : { "Étude": 15, "Travail": 40, "Sport": 8 },
     // Plusieurs journées type possibles, chacune valable sur une période
     // (ou "toujours" si period_start/period_end sont vides). Celle qui
@@ -2145,9 +2145,6 @@ export function initJamsPlansApp() {
     document.getElementById("reminder-enabled").checked = state.reminder.enabled;
     document.getElementById("reminder-time").value = state.reminder.time;
     document.getElementById("reminder-webhook").value = state.reminder.webhookUrl || "";
-    document.getElementById("reminder-channel-email").checked = state.reminder.channelEmail !== false;
-    document.getElementById("reminder-channel-sms").checked = !!state.reminder.channelSms;
-    document.getElementById("reminder-phone").value = state.reminder.phone || "";
     document.getElementById("reminder-timezone").value = state.reminder.timezone || "Europe/Paris";
     renderWeeklyLimits();
   }
@@ -2282,31 +2279,10 @@ export function initJamsPlansApp() {
     const enabled = document.getElementById("reminder-enabled").checked;
     const time = document.getElementById("reminder-time").value || "20:00";
     const webhookUrl = document.getElementById("reminder-webhook").value.trim();
-    const channelEmail = document.getElementById("reminder-channel-email").checked;
-    const channelSms = document.getElementById("reminder-channel-sms").checked;
-    const phone = document.getElementById("reminder-phone").value.trim();
     const timezone = document.getElementById("reminder-timezone").value;
-
-    if (phone && !/^\+[1-9]\d{6,14}$/.test(phone)){
-      msg.textContent = "Le numéro doit être au format international, ex : +33612345678.";
-      msg.classList.add("error");
-      return;
-    }
 
     if (webhookUrl && !/^https?:\/\//i.test(webhookUrl)){
       msg.textContent = "Le webhook Make.com doit être une URL commençant par https://.";
-      msg.classList.add("error");
-      return;
-    }
-
-    if (enabled && !channelEmail && !channelSms){
-      msg.textContent = "Coche au moins un canal (mail ou SMS) pour recevoir le rappel.";
-      msg.classList.add("error");
-      return;
-    }
-
-    if (channelSms && !phone){
-      msg.textContent = "Renseignez un numéro de téléphone pour envoyer le rappel par SMS.";
       msg.classList.add("error");
       return;
     }
@@ -2321,29 +2297,29 @@ export function initJamsPlansApp() {
 
     state.reminder.enabled = enabled;
     state.reminder.time = time;
-    state.reminder.phone = phone;
     state.reminder.timezone = timezone;
     state.reminder.webhookUrl = webhookUrl;
-    state.reminder.channelEmail = channelEmail;
-    state.reminder.channelSms = channelSms;
+    // Le SMS est momentanément retiré (pas de numéro Twilio disponible) :
+    // le rappel part uniquement par mail tant que ce n'est pas réactivé.
+    state.reminder.channelEmail = true;
+    state.reminder.channelSms = false;
     reminderFiredForToday = null;
 
     if (SUPABASE_CONFIGURED){
       try {
         await db.upsertProfile(state.userId, {
-          reminder_enabled: enabled, reminder_time: time, phone: phone || null, timezone,
+          reminder_enabled: enabled, reminder_time: time, timezone,
           reminder_webhook_url: webhookUrl || null,
-          reminder_channel_email: channelEmail, reminder_channel_sms: channelSms,
+          reminder_channel_email: true, reminder_channel_sms: false,
           // Colonne historique conservée pour compat ; plus utilisée pour l'envoi.
-          reminder_channel: channelSms && !channelEmail ? "sms" : "email",
+          reminder_channel: "email",
         });
       }
       catch(err){ msg.textContent = "Erreur : " + err.message; msg.classList.add("error"); return; }
     }
 
     if (!msg.textContent){
-      const canaux = [channelEmail && "mail", channelSms && "SMS"].filter(Boolean).join(" + ") || "aucun";
-      msg.textContent = webhookUrl ? `Rappel enregistré (navigateur + Make.com, canal ${canaux}).` : "Rappel enregistré (navigateur).";
+      msg.textContent = webhookUrl ? "Rappel enregistré (navigateur + Make.com, par mail)." : "Rappel enregistré (navigateur).";
       msg.classList.add("success");
     }
   });
@@ -2352,9 +2328,6 @@ export function initJamsPlansApp() {
     const msg = document.getElementById("reminder-message");
     msg.classList.remove("error", "success");
     const webhookUrl = document.getElementById("reminder-webhook").value.trim();
-    const channelEmail = document.getElementById("reminder-channel-email").checked;
-    const channelSms = document.getElementById("reminder-channel-sms").checked;
-    const phone = document.getElementById("reminder-phone").value.trim();
 
     if (!webhookUrl){
       msg.textContent = "Renseigne d'abord un webhook Make.com avant de tester.";
@@ -2370,15 +2343,15 @@ export function initJamsPlansApp() {
           userId: state.userId || "test",
           firstName: state.profile.firstName || "",
           email: state.profile.email || null,
-          phone: phone || null,
-          channelEmail, channelSms,
+          phone: null,
+          channelEmail: true, channelSms: false,
           remaining: 1,
           message: "Ceci est un test de rappel JamsPlans.",
           date: todayISO(),
         }),
       });
       if (!res.ok) throw new Error("Réponse HTTP " + res.status);
-      msg.textContent = "Test envoyé au webhook Make.com — vérifie la réception (mail/SMS selon le canal coché).";
+      msg.textContent = "Test envoyé au webhook Make.com — vérifie la réception par mail.";
       msg.classList.add("success");
     } catch(err){
       msg.textContent = "Échec de l'envoi du test : " + err.message;
@@ -2649,20 +2622,11 @@ export function initJamsPlansApp() {
         state.profile.firstName = loaded.profile.first_name || state.profile.firstName;
         state.reminder.enabled = !!loaded.profile.reminder_enabled;
         state.reminder.time = (loaded.profile.reminder_time || "20:00").slice(0,5);
-        state.reminder.phone = loaded.profile.phone || "";
         state.reminder.timezone = loaded.profile.timezone || "Europe/Paris";
         state.reminder.webhookUrl = loaded.profile.reminder_webhook_url || "";
-        // reminder_channel_email / _sms sont les colonnes actuelles (cases à
-        // cocher indépendantes) ; si elles n'existent pas encore (base pas à
-        // jour) on retombe sur l'ancienne colonne reminder_channel.
-        if (loaded.profile.reminder_channel_email != null || loaded.profile.reminder_channel_sms != null){
-          state.reminder.channelEmail = loaded.profile.reminder_channel_email !== false;
-          state.reminder.channelSms = !!loaded.profile.reminder_channel_sms;
-        } else {
-          const legacy = loaded.profile.reminder_channel || "email";
-          state.reminder.channelEmail = legacy !== "sms";
-          state.reminder.channelSms = legacy === "sms";
-        }
+        // SMS retiré pour l'instant (pas de numéro Twilio) : uniquement mail.
+        state.reminder.channelEmail = true;
+        state.reminder.channelSms = false;
         state.weeklyLimits = loaded.profile.weekly_limits || {};
         const loadedTemplates = loaded.profile.day_template;
         state.dayTemplates = (Array.isArray(loadedTemplates) && loadedTemplates.length > 0 && loadedTemplates[0].blocks)
