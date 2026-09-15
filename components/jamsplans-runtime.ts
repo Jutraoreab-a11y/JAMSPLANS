@@ -340,7 +340,10 @@ export function initJamsPlansApp() {
   const state = {
     userId: null,
     profile: {
-      firstName: "Abdoulaye",
+      // "Abdoulaye" n'est qu'un exemple pour le mode démo local (sans Supabase) ;
+      // avec un vrai compte, le prénom reste vide tant que l'utilisateur ne l'a
+      // pas renseigné dans Profil.
+      firstName: SUPABASE_CONFIGURED ? "" : "Abdoulaye",
       lastName: "",
       email: "",
       password: "",
@@ -2132,6 +2135,54 @@ export function initJamsPlansApp() {
     }
   });
 
+  document.getElementById("auth-forgot-link").addEventListener("click", async ()=>{
+    const emailField = document.getElementById("auth-email");
+    const msg = document.getElementById("auth-message");
+    msg.classList.remove("error", "success");
+    const email = emailField.value.trim();
+    if (!email){
+      msg.textContent = "Renseignez votre adresse mail ci-dessus, puis cliquez de nouveau sur ce lien.";
+      msg.classList.add("error");
+      emailField.focus();
+      return;
+    }
+    try {
+      const { error } = await supabaseClient.auth.resetPasswordForEmail(email, {
+        redirectTo: window.location.origin,
+      });
+      if (error) throw error;
+      msg.textContent = "Si un compte existe pour cette adresse, un email de réinitialisation vient d'être envoyé.";
+      msg.classList.add("success");
+    } catch(err){
+      msg.textContent = "Erreur : " + err.message;
+      msg.classList.add("error");
+    }
+  });
+
+  // Quand la personne clique sur le lien recu par email, Supabase la ramene
+  // ici avec un événement PASSWORD_RECOVERY : on lui demande alors directement
+  // son nouveau mot de passe via une simple invite, puis on l'enregistre.
+  if (SUPABASE_CONFIGURED){
+    supabaseClient.auth.onAuthStateChange(async (event, session)=>{
+      if (event === "PASSWORD_RECOVERY" && session){
+        const newPassword = window.prompt("Choisissez votre nouveau mot de passe (6 caractères minimum) :");
+        if (!newPassword) return;
+        if (newPassword.length < 6){
+          showToast("Le nouveau mot de passe doit faire au moins 6 caractères.", "error");
+          return;
+        }
+        try {
+          const { error } = await supabaseClient.auth.updateUser({ password: newPassword });
+          if (error) throw error;
+          showToast("Mot de passe mis à jour. Vous êtes connecté.", "success");
+          await enterApp(session);
+        } catch(err){
+          showToast("Erreur lors de la mise à jour du mot de passe : " + err.message, "error");
+        }
+      }
+    });
+  }
+
   document.getElementById("signout-btn").addEventListener("click", async ()=>{
     if (SUPABASE_CONFIGURED) await supabaseClient.auth.signOut();
     if (reminderIntervalId) clearInterval(reminderIntervalId);
@@ -2144,6 +2195,16 @@ export function initJamsPlansApp() {
   async function enterApp(session){
     state.userId = session.user.id;
     state.profile.email = session.user.email || "";
+    // Filet de sécurité : si jamais l'objet session ne portait pas encore
+    // l'email (selon la méthode de connexion), on le récupère explicitement.
+    if (!state.profile.email){
+      try {
+        const { data: freshUser } = await supabaseClient.auth.getUser();
+        if (freshUser && freshUser.user && freshUser.user.email){
+          state.profile.email = freshUser.user.email;
+        }
+      } catch(e){ /* ignore, on retente juste avec ce qu'on a */ }
+    }
     try {
       const loaded = await db.fetchAll(state.userId);
       state.objectives = loaded.objectives;
