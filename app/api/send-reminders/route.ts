@@ -98,8 +98,12 @@ export async function GET(_request: Request) {
         const { date, time, dayOfWeek } = localParts(profile.timezone || 'Europe/Paris');
         const reminderHHMM = (profile.reminder_time || '20:00').slice(0, 5);
 
-        if (time !== reminderHHMM) continue;
-        if (profile.last_reminder_sent_date === date) continue;
+        // On ne sait pas à quelle fréquence cette route est appelée (toutes les
+        // 5 minutes via GitHub Actions, voir .github/workflows/send-reminders.yml) :
+        // on déclenche donc dès que l'heure locale a atteint (ou dépassé) l'heure
+        // choisie, une seule fois par jour grâce au garde-fou last_reminder_sent_date.
+        if (time < reminderHHMM) continue;                          // heure pas encore atteinte
+        if (profile.last_reminder_sent_date === date) continue;    // déjà envoyé aujourd'hui
 
         const remaining = await countUnfinishedTasks(supabase, profile.id, date, dayOfWeek);
         if (remaining <= 0) { results[profile.id] = "rien à faire, pas d'envoi"; continue; }

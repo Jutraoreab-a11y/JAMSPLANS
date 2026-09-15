@@ -113,7 +113,11 @@ Deno.serve(async () => {
       const { date, time, dayOfWeek } = localParts(profile.timezone || "Europe/Paris");
       const reminderHHMM = (profile.reminder_time || "20:00").slice(0, 5);
 
-      if (time !== reminderHHMM) continue;                       // pas la bonne minute
+      // On ne sait pas à quelle fréquence cette fonction est appelée (chaque
+      // minute via pg_cron, ou moins souvent) : on déclenche donc dès que
+      // l'heure locale a atteint (ou dépassé) l'heure choisie, une seule
+      // fois par jour grâce au garde-fou last_reminder_sent_date ci-dessous.
+      if (time < reminderHHMM) continue;                          // heure pas encore atteinte
       if (profile.last_reminder_sent_date === date) continue;    // déjà envoyé aujourd'hui
 
       const remaining = await countUnfinishedTasks(profile.id, date, dayOfWeek);

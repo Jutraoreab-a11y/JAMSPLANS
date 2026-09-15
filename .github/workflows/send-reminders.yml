@@ -1,0 +1,21 @@
+name: Send evening reminders
+
+# JamsPlans est hebergee sur Vercel (plan Hobby), qui ne permet qu'un seul
+# Cron Job natif par jour et avec une precision approximative (+/- 59 min).
+# Chaque profil choisit pourtant sa propre heure de rappel (Profil > Rappel
+# du soir) : ce workflow appelle donc /api/send-reminders toutes les 5
+# minutes depuis GitHub Actions (gratuit), pour verifier a chaque fois si
+# l'heure locale de l'un des profils correspond. La route elle-meme ne fait
+# rien tant que ce n'est pas le cas (voir app/api/send-reminders/route.ts).
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call /api/send-reminders
+        run: |
+          curl -fsS "https://jamsplans.vercel.app/api/send-reminders" || echo "Appel echoue (voir logs Vercel)"
