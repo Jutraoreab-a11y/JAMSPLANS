@@ -2621,63 +2621,6 @@ export function initJamsPlansApp() {
     document.getElementById("auth-password").value = "";
   });
 
-  // Suppression de compte : nécessite une confirmation explicite (deux
-  // clics) puisque l'action est irréversible et efface toutes les données
-  // (objectifs, routines, agenda, check-liste...) via la cascade en base.
-  let deleteAccountConfirmPending = false;
-  let deleteAccountResetTimer = null;
-  const deleteAccountBtnEl = document.getElementById("delete-account-btn");
-  if (deleteAccountBtnEl){
-    deleteAccountBtnEl.addEventListener("click", async ()=>{
-      const msg = document.getElementById("delete-account-message");
-      msg.classList.remove("success");
-
-      if (!deleteAccountConfirmPending){
-        deleteAccountConfirmPending = true;
-        deleteAccountBtnEl.textContent = "Confirmer la suppression définitive ?";
-        msg.textContent = "Cette action est irréversible et efface toutes tes données. Clique à nouveau pour confirmer.";
-        msg.classList.add("error");
-        deleteAccountResetTimer = setTimeout(()=>{
-          deleteAccountConfirmPending = false;
-          deleteAccountBtnEl.textContent = "Supprimer mon compte";
-          msg.textContent = "";
-          msg.classList.remove("error");
-        }, 6000);
-        return;
-      }
-
-      clearTimeout(deleteAccountResetTimer);
-      deleteAccountConfirmPending = false;
-      deleteAccountBtnEl.disabled = true;
-      deleteAccountBtnEl.textContent = "Suppression en cours…";
-
-      try {
-        if (SUPABASE_CONFIGURED){
-          const { data: sessionData } = await supabaseClient.auth.getSession();
-          const accessToken = sessionData?.session?.access_token || "";
-          const res = await fetch("/api/delete-account", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "Authorization": "Bearer " + accessToken },
-          });
-          const body = await res.json().catch(()=>({}));
-          if (!res.ok) throw new Error(body.error || "Échec de la suppression du compte.");
-          await supabaseClient.auth.signOut();
-        }
-        if (reminderIntervalId) clearInterval(reminderIntervalId);
-        document.getElementById("app-root").style.display = "none";
-        document.getElementById("auth-screen").style.display = "flex";
-        document.getElementById("auth-email").value = "";
-        document.getElementById("auth-password").value = "";
-        showToast("Compte supprimé.", "success");
-      } catch(err){
-        msg.textContent = "Erreur : " + err.message;
-        msg.classList.add("error");
-        deleteAccountBtnEl.textContent = "Supprimer mon compte";
-        deleteAccountBtnEl.disabled = false;
-      }
-    });
-  }
-
   async function enterApp(session){
     state.userId = session.user.id;
     state.profile.email = session.user.email || "";
@@ -2730,8 +2673,6 @@ export function initJamsPlansApp() {
     document.getElementById("auth-screen").style.display = "none";
     document.getElementById("app-root").style.display = "block";
     document.getElementById("signout-btn").style.display = "inline";
-    const deleteAccountBtn = document.getElementById("delete-account-btn");
-    if (deleteAccountBtn) deleteAccountBtn.style.display = "inline";
     renderAll();
   }
 
