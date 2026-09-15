@@ -167,18 +167,23 @@ begin
 end;
 $$ language plpgsql;
 
+drop trigger if exists trg_objectives_updated_at on public.objectives;
 create trigger trg_objectives_updated_at before update on public.objectives
   for each row execute function public.set_updated_at();
 
+drop trigger if exists trg_routines_updated_at on public.routines;
 create trigger trg_routines_updated_at before update on public.routines
   for each row execute function public.set_updated_at();
 
+drop trigger if exists trg_daily_logs_updated_at on public.daily_logs;
 create trigger trg_daily_logs_updated_at before update on public.daily_logs
   for each row execute function public.set_updated_at();
 
+drop trigger if exists trg_profiles_updated_at on public.profiles;
 create trigger trg_profiles_updated_at before update on public.profiles
   for each row execute function public.set_updated_at();
 
+drop trigger if exists trg_agenda_tasks_updated_at on public.agenda_tasks;
 create trigger trg_agenda_tasks_updated_at before update on public.agenda_tasks
   for each row execute function public.set_updated_at();
 
@@ -191,26 +196,31 @@ alter table public.daily_logs enable row level security;
 alter table public.profiles enable row level security;
 alter table public.agenda_tasks enable row level security;
 
+drop policy if exists "Users manage their own objectives" on public.objectives;
 create policy "Users manage their own objectives"
   on public.objectives for all
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
 
+drop policy if exists "Users manage their own routines" on public.routines;
 create policy "Users manage their own routines"
   on public.routines for all
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
 
+drop policy if exists "Users manage their own daily_logs" on public.daily_logs;
 create policy "Users manage their own daily_logs"
   on public.daily_logs for all
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
 
+drop policy if exists "Users manage their own profile" on public.profiles;
 create policy "Users manage their own profile"
   on public.profiles for all
   using (auth.uid() = id)
   with check (auth.uid() = id);
 
+drop policy if exists "Users manage their own agenda_tasks" on public.agenda_tasks;
 create policy "Users manage their own agenda_tasks"
   on public.agenda_tasks for all
   using (auth.uid() = user_id)
@@ -236,52 +246,14 @@ select
   end as color_code
 from public.daily_logs dl;
 
--- ---------------------------------------------------------
--- MIGRATION — à exécuter si vous aviez déjà lancé une version
--- antérieure de ce script (daily_logs sans agenda_task_id, etc.)
--- Sans effet si vous partez d'une base neuve (les "create table"
--- ci-dessus ont déjà tout créé correctement).
--- ---------------------------------------------------------
-alter table public.daily_logs alter column objective_id drop not null;
-alter table public.daily_logs add column if not exists agenda_task_id uuid references public.agenda_tasks(id) on delete set null;
-
-alter table public.daily_logs drop constraint if exists daily_logs_routine_id_log_date_key;
-alter table public.daily_logs drop constraint if exists daily_logs_user_id_routine_id_log_date_key;
-alter table public.daily_logs drop constraint if exists daily_logs_one_source;
-alter table public.daily_logs add constraint daily_logs_one_source check (
-  (routine_id is not null and agenda_task_id is null) or
-  (routine_id is null and agenda_task_id is not null)
-);
-
-alter table public.daily_logs drop constraint if exists daily_logs_user_id_routine_id_agenda_task_id_log_date_key;
-alter table public.daily_logs add constraint daily_logs_user_id_routine_id_agenda_task_id_log_date_key
-  unique (user_id, routine_id, agenda_task_id, log_date);
-
--- agenda_tasks : passage d'une date unique (task_date) à une plage
--- (start_date/end_date), + créneau planning et priorité.
-alter table public.agenda_tasks add column if not exists start_date date;
-alter table public.agenda_tasks add column if not exists end_date date;
-update public.agenda_tasks set start_date = task_date where start_date is null and exists (
-  select 1 from information_schema.columns where table_name='agenda_tasks' and column_name='task_date'
-);
-update public.agenda_tasks set end_date = start_date where end_date is null;
-alter table public.agenda_tasks alter column start_date set not null;
-alter table public.agenda_tasks alter column end_date set not null;
-alter table public.agenda_tasks add column if not exists planning_start time;
-alter table public.agenda_tasks add column if not exists planning_end time;
-alter table public.agenda_tasks add column if not exists is_priority boolean not null default false;
-alter table public.agenda_tasks drop constraint if exists agenda_tasks_date_order;
-alter table public.agenda_tasks add constraint agenda_tasks_date_order check (end_date >= start_date);
-alter table public.agenda_tasks drop column if exists task_date;
-
--- routines : ajout du marqueur "prioritaire"
-alter table public.routines add column if not exists is_priority boolean not null default false;
-alter table public.routines add column if not exists end_time time;
-
--- profiles : champs nécessaires aux rappels par SMS (Edge Function + Twilio)
-alter table public.profiles add column if not exists phone text;
-alter table public.profiles add column if not exists timezone text not null default 'Europe/Paris';
-alter table public.profiles add column if not exists last_reminder_sent_date date;
+-- (Le bloc de migration pour d'anciennes installations a été retiré : 
+--  toutes les colonnes qu'il ajoutait sont déjà présentes dans les "create table"
+--  ci-dessus. Sur une base neuve, une des lignes de ce bloc échouait toujours
+--  avec "column \"task_date\" does not exist", car Postgres valide la référence
+--  à cette colonne à l'analyse de la requête, avant même de vérifier la condition
+--  "exists (...)" censée la protéger — et comme Supabase exécute tout le script
+--  dans une seule transaction, cette erreur annulait aussi toutes les tables déjà
+--  créées juste avant.)
 
 -- ---------------------------------------------------------
 -- CRON : déclenche send-reminders toutes les minutes
