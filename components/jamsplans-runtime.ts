@@ -878,18 +878,23 @@ export function initJamsPlansApp() {
     const wrap = document.getElementById("objective-alerts");
     if (!wrap) return;
     const alerts = [];
+    const name = (state.profile.firstName || "").trim();
+    const hello = name ? " " + escapeHtml(name) : "";
 
-    // Seuil relevé à 4 (au lieu de 3) : suivre 3 objectifs de front reste
-    // raisonnable, l'alerte ne se déclenche donc qu'à partir du 4e.
-    if (pursuedObjectives.length >= 4){
-      const name = (state.profile.firstName || "").trim();
-      alerts.push(`<p class="limit-alert">Attention${name ? " " + escapeHtml(name) : ""}, tu suis ${pursuedObjectives.length} objectifs à la fois : concentre-toi sur 1 ou 2 pour ne pas te disperser.</p>`);
+    // Seuil de dispersion : dès 3 objectifs suivis de front.
+    if (pursuedObjectives.length >= 3){
+      alerts.push(`<p class="limit-alert">Attention${hello}, ${pursuedObjectives.length} objectifs en même temps : mieux vaut se concentrer sur 1 ou 2.</p>`);
     }
 
+    // Chevauchements de dates : même signal que ci-dessus, mais on ne le
+    // déclenche qu'à partir du 4e objectif impliqué dans au moins un
+    // chevauchement — pas dès la première paire, pour ne pas spammer.
     const overlaps = findOverlappingObjectivePairs(pursuedObjectives);
-    overlaps.forEach(([a,b])=>{
-      alerts.push(`<p class="limit-alert">"${escapeHtml(a.title)}" et "${escapeHtml(b.title)}" se chevauchent.</p>`);
-    });
+    const overlappingIds = new Set();
+    overlaps.forEach(([a,b])=>{ overlappingIds.add(a.id); overlappingIds.add(b.id); });
+    if (overlappingIds.size >= 4){
+      alerts.push(`<p class="limit-alert">Attention${hello}, ${overlappingIds.size} objectifs se chevauchent en même temps : vérifie ton planning.</p>`);
+    }
 
     wrap.innerHTML = alerts.join("");
   }
@@ -937,9 +942,9 @@ export function initJamsPlansApp() {
         <div class="gantt-row">
           <div class="gantt-row-label">${escapeHtml(obj.title)}<span class="cat-badge" style="background:${categoryColor(obj.category || "Autre")};">${escapeHtml(obj.category || "Autre")}</span></div>
           <div class="gantt-track">
-            <div class="gantt-bar" style="left:${leftPct}%; width:${widthPct}%; background:${barColor}59;">
+            <div class="gantt-bar" style="left:${leftPct}%; width:${widthPct}%; background:${barColor}80; box-shadow:0 0 0 1px ${barColor}, 0 0 8px ${barColor}99;">
               <div class="gantt-bar-fill" style="width:${pct}%; background:${barColor};"></div>
-              <span class="gantt-bar-pct" style="color:#fff; text-shadow:0 1px 2px rgba(0,0,0,.7);">${pct}%</span>
+              <span class="gantt-bar-pct" style="color:#fff; font-weight:700; text-shadow:0 1px 3px rgba(0,0,0,.85);">${pct}%</span>
             </div>
           </div>
         </div>
