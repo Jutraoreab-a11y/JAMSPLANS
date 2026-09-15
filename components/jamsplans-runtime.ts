@@ -367,7 +367,7 @@ export function initJamsPlansApp() {
     dashboardRange: "week",
     dashboardYear: new Date().getFullYear(),
     dashboardMonth: new Date().getMonth(), // 0-11
-    reminder: { enabled: false, time: "20:00", phone: "", timezone: "Europe/Paris", webhookUrl: "", channel: "email" },
+    reminder: { enabled: false, time: "20:00", phone: "", timezone: "Europe/Paris", webhookUrl: "", channelEmail: true, channelSms: false },
     weeklyLimits: SUPABASE_CONFIGURED ? {} : { "Étude": 15, "Travail": 40, "Sport": 8 },
     // Plusieurs journées type possibles, chacune valable sur une période
     // (ou "toujours" si period_start/period_end sont vides). Celle qui
@@ -411,6 +411,7 @@ export function initJamsPlansApp() {
   function excuseLabel(reason){
     if (reason === "malade") return "Malade";
     if (reason === "conges_payes") return "Congés payés";
+    if (reason) return reason; // raison personnalisée ("Autre")
     return "Exception";
   }
 
@@ -917,19 +918,25 @@ export function initJamsPlansApp() {
 
     const monthLabelsHtml = MONTH_NAMES_SHORT.map(m=>`<span>${m}</span>`).join("");
 
-    const rowsHtml = objectives.map(obj=>{
+    // Palette vive dédiée au Gantt (indépendante des couleurs de catégorie,
+    // plus sobres) : chaque objectif prend une couleur différente pour que
+    // la frise soit lisible et vivante d'un coup d'œil.
+    const GANTT_VIVID_PALETTE = ["#FF8C42", "#43B05C", "#FFD23F", "#EC4899"];
+
+    const rowsHtml = objectives.map((obj, i)=>{
       const s = Math.max(new Date(obj.start_date+"T00:00:00").getTime(), yearStart);
       const e = Math.min(new Date(obj.target_date+"T00:00:00").getTime(), yearEnd);
       const leftPct = ((s - yearStart) / yearSpan) * 100;
       const widthPct = Math.max(((e - s) / yearSpan) * 100, 1);
       const time = objectiveTimeProgress(obj);
       const pct = time ? time.pct : 0;
+      const barColor = GANTT_VIVID_PALETTE[i % GANTT_VIVID_PALETTE.length];
       return `
         <div class="gantt-row">
           <div class="gantt-row-label">${escapeHtml(obj.title)}<span class="cat-badge" style="background:${categoryColor(obj.category || "Autre")};">${escapeHtml(obj.category || "Autre")}</span></div>
           <div class="gantt-track">
-            <div class="gantt-bar" style="left:${leftPct}%; width:${widthPct}%;">
-              <div class="gantt-bar-fill" style="width:${pct}%;"></div>
+            <div class="gantt-bar" style="left:${leftPct}%; width:${widthPct}%; background:${barColor}33;">
+              <div class="gantt-bar-fill" style="width:${pct}%; background:${barColor};"></div>
               <span class="gantt-bar-pct">${pct}%</span>
             </div>
           </div>
@@ -1732,30 +1739,62 @@ export function initJamsPlansApp() {
           <input type="number" min="0" step="0.25" class="actual-hours mono" style="width:80px;" value="${existing ? existing.actual_hours : item.planned_hours}" />
           <span class="muted" style="font-size:12px;">/ ${item.planned_hours}h</span>
         </div>
-        <div style="margin-top:8px;">
+        <div class="excuse-block" style="margin-top:8px;">
           <label class="muted" style="font-size:12px;">Exception</label>
           <select class="excuse-select" style="width:auto; margin-left:6px;">
             <option value="">Aucune (jour normal)</option>
             <option value="malade">Malade</option>
             <option value="conges_payes">Congés payés</option>
+            <option value="autre">Autre</option>
           </select>
+          <input type="text" class="excuse-other-input mono" placeholder="Précise la raison" style="display:none; margin-top:6px; width:100%;" />
         </div>
         <button class="btn savebtn">Enregistrer</button>
       `;
-      card.querySelector(".excuse-select").value = existing && existing.excused_reason ? existing.excused_reason : "";
+      const excuseBlock = card.querySelector(".excuse-block");
+      const excuseSelect = card.querySelector(".excuse-select");
+      const excuseOtherInput = card.querySelector(".excuse-other-input");
+      const existingReason = existing && existing.excused_reason ? existing.excused_reason : "";
+      if (existingReason === "malade" || existingReason === "conges_payes" || existingReason === ""){
+        excuseSelect.value = existingReason;
+      } else {
+        // Raison personnalisée enregistrée précédemment ("Autre").
+        excuseSelect.value = "autre";
+        excuseOtherInput.value = existingReason;
+        excuseOtherInput.style.display = "block";
+      }
+      excuseSelect.addEventListener("change", ()=>{
+        excuseOtherInput.style.display = excuseSelect.value === "autre" ? "block" : "none";
+      });
       let currentStatus = existing ? existing.status : "done";
+      // L'exception (malade / congés payés / autre) n'a de sens que si la
+      // tâche n'a pas été faite ou seulement partiellement — on la cache
+      // sinon pour ne pas mélanger "fait" et "excusé".
+      function updateExcuseVisibility(){
+        excuseBlock.style.display = (currentStatus === "not_done" || currentStatus === "partial") ? "block" : "none";
+        if (excuseBlock.style.display === "none"){
+          excuseSelect.value = "";
+          excuseOtherInput.value = "";
+          excuseOtherInput.style.display = "none";
+        }
+      }
+      updateExcuseVisibility();
       card.querySelectorAll(".status-btn").forEach(b=>{
         if (b.dataset.status === currentStatus) b.classList.add("active");
         b.addEventListener("click", ()=>{
           card.querySelectorAll(".status-btn").forEach(x=>x.classList.remove("active"));
           b.classList.add("active");
           currentStatus = b.dataset.status;
+          updateExcuseVisibility();
         });
       });
       const saveBtn = card.querySelector(".savebtn");
       saveBtn.addEventListener("click", async ()=>{
         const actual = parseFloat(card.querySelector(".actual-hours").value) || 0;
-        const excusedReason = card.querySelector(".excuse-select").value || null;
+        const excuseValue = excuseSelect.value;
+        const excusedReason = excuseValue === "" ? null
+          : excuseValue === "autre" ? (excuseOtherInput.value.trim() || "Autre")
+          : excuseValue;
         const idx = state.dailyLogs.findIndex(l=> l.log_date===date && (
           item.routine_id ? l.routine_id===item.routine_id : l.agenda_task_id===item.agenda_task_id
         ));
@@ -2099,7 +2138,8 @@ export function initJamsPlansApp() {
     document.getElementById("reminder-enabled").checked = state.reminder.enabled;
     document.getElementById("reminder-time").value = state.reminder.time;
     document.getElementById("reminder-webhook").value = state.reminder.webhookUrl || "";
-    document.getElementById("reminder-channel").value = state.reminder.channel || "email";
+    document.getElementById("reminder-channel-email").checked = state.reminder.channelEmail !== false;
+    document.getElementById("reminder-channel-sms").checked = !!state.reminder.channelSms;
     document.getElementById("reminder-phone").value = state.reminder.phone || "";
     document.getElementById("reminder-timezone").value = state.reminder.timezone || "Europe/Paris";
     renderWeeklyLimits();
@@ -2235,7 +2275,8 @@ export function initJamsPlansApp() {
     const enabled = document.getElementById("reminder-enabled").checked;
     const time = document.getElementById("reminder-time").value || "20:00";
     const webhookUrl = document.getElementById("reminder-webhook").value.trim();
-    const channel = document.getElementById("reminder-channel").value || "email";
+    const channelEmail = document.getElementById("reminder-channel-email").checked;
+    const channelSms = document.getElementById("reminder-channel-sms").checked;
     const phone = document.getElementById("reminder-phone").value.trim();
     const timezone = document.getElementById("reminder-timezone").value;
 
@@ -2251,7 +2292,13 @@ export function initJamsPlansApp() {
       return;
     }
 
-    if (channel === "sms" && !phone){
+    if (enabled && !channelEmail && !channelSms){
+      msg.textContent = "Coche au moins un canal (mail ou SMS) pour recevoir le rappel.";
+      msg.classList.add("error");
+      return;
+    }
+
+    if (channelSms && !phone){
       msg.textContent = "Renseignez un numéro de téléphone pour envoyer le rappel par SMS.";
       msg.classList.add("error");
       return;
@@ -2270,22 +2317,65 @@ export function initJamsPlansApp() {
     state.reminder.phone = phone;
     state.reminder.timezone = timezone;
     state.reminder.webhookUrl = webhookUrl;
-    state.reminder.channel = channel;
+    state.reminder.channelEmail = channelEmail;
+    state.reminder.channelSms = channelSms;
     reminderFiredForToday = null;
 
     if (SUPABASE_CONFIGURED){
       try {
         await db.upsertProfile(state.userId, {
           reminder_enabled: enabled, reminder_time: time, phone: phone || null, timezone,
-          reminder_webhook_url: webhookUrl || null, reminder_channel: channel,
+          reminder_webhook_url: webhookUrl || null,
+          reminder_channel_email: channelEmail, reminder_channel_sms: channelSms,
+          // Colonne historique conservée pour compat ; plus utilisée pour l'envoi.
+          reminder_channel: channelSms && !channelEmail ? "sms" : "email",
         });
       }
       catch(err){ msg.textContent = "Erreur : " + err.message; msg.classList.add("error"); return; }
     }
 
     if (!msg.textContent){
-      msg.textContent = webhookUrl ? `Rappel enregistré (navigateur + Make.com, canal ${channel === "sms" ? "SMS" : "mail"}).` : "Rappel enregistré (navigateur).";
+      const canaux = [channelEmail && "mail", channelSms && "SMS"].filter(Boolean).join(" + ") || "aucun";
+      msg.textContent = webhookUrl ? `Rappel enregistré (navigateur + Make.com, canal ${canaux}).` : "Rappel enregistré (navigateur).";
       msg.classList.add("success");
+    }
+  });
+
+  document.getElementById("reminder-test")?.addEventListener("click", async ()=>{
+    const msg = document.getElementById("reminder-message");
+    msg.classList.remove("error", "success");
+    const webhookUrl = document.getElementById("reminder-webhook").value.trim();
+    const channelEmail = document.getElementById("reminder-channel-email").checked;
+    const channelSms = document.getElementById("reminder-channel-sms").checked;
+    const phone = document.getElementById("reminder-phone").value.trim();
+
+    if (!webhookUrl){
+      msg.textContent = "Renseigne d'abord un webhook Make.com avant de tester.";
+      msg.classList.add("error");
+      return;
+    }
+
+    try {
+      const res = await fetch(webhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: state.userId || "test",
+          firstName: state.profile.firstName || "",
+          email: state.profile.email || null,
+          phone: phone || null,
+          channelEmail, channelSms,
+          remaining: 1,
+          message: "Ceci est un test de rappel JamsPlans.",
+          date: todayISO(),
+        }),
+      });
+      if (!res.ok) throw new Error("Réponse HTTP " + res.status);
+      msg.textContent = "Test envoyé au webhook Make.com — vérifie la réception (mail/SMS selon le canal coché).";
+      msg.classList.add("success");
+    } catch(err){
+      msg.textContent = "Échec de l'envoi du test : " + err.message;
+      msg.classList.add("error");
     }
   });
 
@@ -2525,7 +2615,17 @@ export function initJamsPlansApp() {
         state.reminder.phone = loaded.profile.phone || "";
         state.reminder.timezone = loaded.profile.timezone || "Europe/Paris";
         state.reminder.webhookUrl = loaded.profile.reminder_webhook_url || "";
-        state.reminder.channel = loaded.profile.reminder_channel || "email";
+        // reminder_channel_email / _sms sont les colonnes actuelles (cases à
+        // cocher indépendantes) ; si elles n'existent pas encore (base pas à
+        // jour) on retombe sur l'ancienne colonne reminder_channel.
+        if (loaded.profile.reminder_channel_email != null || loaded.profile.reminder_channel_sms != null){
+          state.reminder.channelEmail = loaded.profile.reminder_channel_email !== false;
+          state.reminder.channelSms = !!loaded.profile.reminder_channel_sms;
+        } else {
+          const legacy = loaded.profile.reminder_channel || "email";
+          state.reminder.channelEmail = legacy !== "sms";
+          state.reminder.channelSms = legacy === "sms";
+        }
         state.weeklyLimits = loaded.profile.weekly_limits || {};
         const loadedTemplates = loaded.profile.day_template;
         state.dayTemplates = (Array.isArray(loadedTemplates) && loadedTemplates.length > 0 && loadedTemplates[0].blocks)

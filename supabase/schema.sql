@@ -127,7 +127,9 @@ create table if not exists public.profiles (
   reminder_enabled boolean not null default false,
   reminder_time time not null default '20:00',
   reminder_webhook_url text,                            -- URL de webhook Make.com déclenché au moment du rappel
-  reminder_channel text not null default 'email',       -- 'email' | 'sms' : canal transmis au scénario Make
+  reminder_channel text not null default 'email',       -- ancien champ, conservé pour compat (non utilisé pour l'envoi)
+  reminder_channel_email boolean not null default true, -- rappel par mail (case à cocher, indépendante du SMS)
+  reminder_channel_sms boolean not null default false,  -- rappel par SMS (case à cocher, indépendante du mail)
   timezone text not null default 'Europe/Paris',
   last_reminder_sent_date date,                         -- évite les doublons d'envoi le même jour
   weekly_limits jsonb not null default '{}'::jsonb,     -- ex: { "Travail": 40, "Sport": 8 }
@@ -143,6 +145,10 @@ comment on table public.profiles is 'Profil utilisateur (prénom, rappel du soir
 alter table public.profiles drop column if exists last_name;
 alter table public.profiles add column if not exists reminder_webhook_url text;
 alter table public.profiles add column if not exists reminder_channel text not null default 'email';
+-- Cases à cocher indépendantes (mail ET/OU SMS) qui remplacent l'ancien
+-- choix unique reminder_channel ci-dessus (conservée pour compat).
+alter table public.profiles add column if not exists reminder_channel_email boolean not null default true;
+alter table public.profiles add column if not exists reminder_channel_sms boolean not null default false;
 
 -- Crée automatiquement une ligne profiles à l'inscription (signup)
 create or replace function public.handle_new_user()

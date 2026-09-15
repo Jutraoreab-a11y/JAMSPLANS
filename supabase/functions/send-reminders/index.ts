@@ -97,7 +97,7 @@ async function countUnfinishedTasks(userId: string, dateStr: string, dayOfWeek: 
 Deno.serve(async () => {
   const { data: profiles, error } = await supabase
     .from("profiles")
-    .select("id, first_name, reminder_enabled, reminder_time, reminder_webhook_url, reminder_channel, phone, timezone, last_reminder_sent_date")
+    .select("id, first_name, reminder_enabled, reminder_time, reminder_webhook_url, reminder_channel_email, reminder_channel_sms, phone, timezone, last_reminder_sent_date")
     .eq("reminder_enabled", true)
     .not("reminder_webhook_url", "is", null);
 
@@ -138,7 +138,8 @@ Deno.serve(async () => {
         firstName: profile.first_name || "",
         email,
         phone: profile.phone || null,
-        channel: profile.reminder_channel || "email",
+        channelEmail: profile.reminder_channel_email !== false,
+        channelSms: !!profile.reminder_channel_sms,
         remaining,
         message,
         date,
