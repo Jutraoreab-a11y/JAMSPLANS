@@ -98,6 +98,7 @@ create table if not exists public.daily_logs (
   planned_hours numeric(4,2) not null default 0,
   actual_hours numeric(4,2) not null default 0,
   note text,
+  excused_reason text,                                  -- 'malade' | 'conges_payes' | null : exception qui ne compte pas comme un échec
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint daily_logs_one_source check (
@@ -109,19 +110,24 @@ create table if not exists public.daily_logs (
 
 comment on table public.daily_logs is 'Check-in quotidien : statut de la tâche et heures réellement effectuées';
 
+-- Idempotent : ajoute la colonne sur une base déjà créée avant son introduction.
+alter table public.daily_logs add column if not exists excused_reason text;
+
 -- ---------------------------------------------------------
 -- TABLE: profiles
--- Infos de profil affichées dans l'onglet "Profil" (nom, prénom).
--- L'email et le mot de passe restent gérés par Supabase Auth
--- (auth.users / supabase.auth.updateUser) — on ne les duplique pas ici.
+-- Infos de profil affichées dans l'onglet "Profil" (prénom uniquement —
+-- le champ "Nom" a été retiré). L'email et le mot de passe restent gérés
+-- par Supabase Auth (auth.users / supabase.auth.updateUser) — on ne les
+-- duplique pas ici.
 -- ---------------------------------------------------------
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   first_name text not null default '',
-  last_name text not null default '',
+  phone text,                                           -- ex: +33612345678, utilisé si le canal du rappel = SMS
   reminder_enabled boolean not null default false,
   reminder_time time not null default '20:00',
-  phone text,                                           -- ex: +33612345678 (format E.164 requis par Twilio)
+  reminder_webhook_url text,                            -- URL de webhook Make.com déclenché au moment du rappel
+  reminder_channel text not null default 'email',       -- 'email' | 'sms' : canal transmis au scénario Make
   timezone text not null default 'Europe/Paris',
   last_reminder_sent_date date,                         -- évite les doublons d'envoi le même jour
   weekly_limits jsonb not null default '{}'::jsonb,     -- ex: { "Travail": 40, "Sport": 8 }
@@ -130,14 +136,24 @@ create table if not exists public.profiles (
   updated_at timestamptz not null default now()
 );
 
-comment on table public.profiles is 'Profil utilisateur (nom / prénom) — 1 ligne par utilisateur Auth';
+comment on table public.profiles is 'Profil utilisateur (prénom, rappel du soir) — 1 ligne par utilisateur Auth';
+
+-- Mises à jour idempotentes pour les bases déjà créées avant l'ajout des
+-- champs ci-dessus (safe à ré-exécuter : IF EXISTS / IF NOT EXISTS partout).
+alter table public.profiles drop column if exists last_name;
+alter table public.profiles add column if not exists reminder_webhook_url text;
+alter table public.profiles add column if not exists reminder_channel text not null default 'email';
 
 -- Crée automatiquement une ligne profiles à l'inscription (signup)
 create or replace function public.handle_new_user()
 returns trigger as $$
 begin
-  insert into public.profiles (id, first_name)
-  values (new.id, coalesce(new.raw_user_meta_data->>'first_name', ''));
+  insert into public.profiles (id, first_name, phone)
+  values (
+    new.id,
+    coalesce(new.raw_user_meta_data->>'first_name', ''),
+    nullif(new.raw_user_meta_data->>'phone', '')
+  );
   return new;
 end;
 $$ language plpgsql security definer;
@@ -260,8 +276,9 @@ from public.daily_logs dl;
 -- ---------------------------------------------------------
 -- 1. Dans Supabase : Database > Extensions, activez "pg_cron" et "pg_net".
 -- 2. Déployez la fonction : supabase functions deploy send-reminders
--- 3. Définissez les secrets Twilio :
---    supabase secrets set TWILIO_ACCOUNT_SID=xxx TWILIO_AUTH_TOKEN=xxx TWILIO_FROM_NUMBER=+33...
+--    (elle appelle directement le webhook Make.com renseigné par chaque
+--    utilisateur dans Profil > Rappel du soir — aucun secret Twilio requis.)
+-- 3. (rien à configurer côté secrets : chaque profil porte sa propre URL de webhook)
 -- 4. Remplacez <project-ref> et <anon-key> ci-dessous, puis exécutez ce bloc
 --    dans le SQL Editor (une seule fois) :
 --

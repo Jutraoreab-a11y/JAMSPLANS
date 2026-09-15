@@ -225,9 +225,23 @@
 
   .dt-periods{display:flex; flex-wrap:wrap; gap:8px; margin-top:12px;}
   .dt-legend{display:flex; flex-direction:column; gap:6px; margin-top:14px;}
-  .dt-legend-item{display:flex; align-items:center; gap:8px; font-size:13px;}
+  .dt-legend-item{display:flex; align-items:center; gap:8px; font-size:13px; flex-wrap:wrap;}
   .dt-legend-item .dt-swatch{width:10px; height:10px; border-radius:3px; flex-shrink:0;}
   .dt-legend-item span:nth-child(2){flex:1;}
+  .dt-legend-item .dt-delete-btn{font-size:11px;}
+
+  .gantt-chart-inner{display:flex; flex-direction:column; gap:10px;}
+  .gantt-months{display:grid; grid-template-columns:repeat(12, 1fr); gap:2px; font-size:10px; color:var(--muted); padding-left:150px;}
+  .gantt-row{display:flex; align-items:center; gap:10px;}
+  .gantt-row-label{width:150px; flex-shrink:0; font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .gantt-track{position:relative; flex:1; height:20px; background:var(--empty); border-radius:4px;}
+  .gantt-bar{position:absolute; top:2px; bottom:2px; border-radius:4px; background:var(--line); overflow:hidden; min-width:2px;}
+  .gantt-bar-fill{height:100%; background:linear-gradient(90deg,#4C8FD6,#4CAF6D);}
+  .gantt-bar-pct{position:absolute; top:0; left:6px; font-size:9.5px; line-height:16px; color:var(--ink); mix-blend-mode:difference; filter:invert(1);}
+  @media (max-width:520px){
+    .gantt-months{padding-left:90px;}
+    .gantt-row-label{width:90px;}
+  }
 
   .dc-item{display:flex; align-items:center; gap:10px; padding:8px 0; border-top:1px solid var(--line); font-size:13px;}
   .dc-item:first-child{border-top:none;}
@@ -307,7 +321,10 @@
 
   .obj-pills{display:flex; flex-wrap:wrap; gap:8px; margin-top:12px;}
 
-  .target-switch{display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-bottom:24px;}
+  .target-switch{display:grid; grid-template-columns:repeat(4, 1fr); gap:8px; margin-bottom:24px;}
+  @media (max-width:480px){
+    .target-switch{grid-template-columns:1fr 1fr;}
+  }
   .target-switch-btn{
     border:1px solid var(--line); background:linear-gradient(160deg, rgba(255,255,255,.05), rgba(255,255,255,0) 55%), var(--card); box-shadow:0 1px 0 rgba(255,255,255,.04) inset, 0 6px 18px rgba(0,0,0,.35); border-radius:6px;
     padding:16px 10px; font-family:inherit; font-size:15px; font-weight:500; color:var(--muted);

@@ -152,9 +152,16 @@ export function initJamsPlansApp() {
     const now = Date.now();
     if (end <= start) return null;
 
+    // L'objectif n'a pas encore commencé : pas de "jours restants" tant qu'on
+    // n'est pas dans la fenêtre, on affiche plutôt "commence dans X jours".
+    if (now < start){
+      const daysUntilStart = Math.ceil((start - now) / 86400000);
+      return { pct: 0, daysLeft: Math.ceil((end - start) / 86400000), overdue: false, notStarted: true, daysUntilStart };
+    }
+
     const pct = Math.round(Math.min(Math.max((now - start) / (end - start), 0), 1) * 100);
     const daysLeft = Math.ceil((end - now) / 86400000);
-    return { pct, daysLeft, overdue: now > end };
+    return { pct, daysLeft, overdue: now > end, notStarted: false };
   }
 
   // % de discipline propre à un objectif : proportion de check-ins "verts"
@@ -170,10 +177,13 @@ export function initJamsPlansApp() {
   function objectiveProgressHtml(obj){
     const time = objectiveTimeProgress(obj);
     const disciplinePct = objectiveDisciplinePct(obj);
+    const timeText = !time ? "" : time.notStarted
+      ? `commence dans ${time.daysUntilStart} j`
+      : `${time.pct}% du temps écoulé${time.overdue ? " · échéance dépassée" : ` · ${time.daysLeft} j restants`}`;
     const timeBar = time ? `
       <div class="obj-progress">
         <div class="obj-progress-track"><div class="obj-progress-fill" style="width:${time.pct}%; background:linear-gradient(90deg,#4C8FD6,#4CAF6D);"></div></div>
-        <p class="obj-progress-text">${time.pct}% du temps écoulé${time.overdue ? " · échéance dépassée" : ` · ${time.daysLeft} j restants`}</p>
+        <p class="obj-progress-text">${timeText}</p>
       </div>
     ` : "";
     const disciplineBar = `
@@ -344,7 +354,6 @@ export function initJamsPlansApp() {
       // avec un vrai compte, le prénom reste vide tant que l'utilisateur ne l'a
       // pas renseigné dans Profil.
       firstName: SUPABASE_CONFIGURED ? "" : "Abdoulaye",
-      lastName: "",
       email: "",
       password: "",
     },
@@ -358,7 +367,7 @@ export function initJamsPlansApp() {
     dashboardRange: "week",
     dashboardYear: new Date().getFullYear(),
     dashboardMonth: new Date().getMonth(), // 0-11
-    reminder: { enabled: false, time: "20:00", phone: "", timezone: "Europe/Paris" },
+    reminder: { enabled: false, time: "20:00", phone: "", timezone: "Europe/Paris", webhookUrl: "", channel: "email" },
     weeklyLimits: SUPABASE_CONFIGURED ? {} : { "Étude": 15, "Travail": 40, "Sport": 8 },
     // Plusieurs journées type possibles, chacune valable sur une période
     // (ou "toujours" si period_start/period_end sont vides). Celle qui
@@ -390,30 +399,42 @@ export function initJamsPlansApp() {
   // LOGIQUE DE SCORING (miroir de lib/calculations.ts)
   // =========================================================
   function getColorCode(log){
+    if (log.excused_reason) return "excused";
     if (log.status === "not_done" || log.actual_hours <= 0) return "red";
     if (log.status === "done" && log.planned_hours > 0 && log.actual_hours >= log.planned_hours) return "green";
     if (log.planned_hours === 0 && log.actual_hours > 0) return "green";
     return "orange";
   }
 
-  const COLOR_HEX = { green:"var(--green)", orange:"var(--orange)", red:"var(--red)", empty:"var(--empty)" };
+  const COLOR_HEX = { green:"var(--green)", orange:"var(--orange)", red:"var(--red)", empty:"var(--empty)", excused:"var(--muted)" };
 
+  function excuseLabel(reason){
+    if (reason === "malade") return "Malade";
+    if (reason === "conges_payes") return "Congés payés";
+    return "Exception";
+  }
+
+  // Les jours en exception (malade / congés payés) ne comptent ni pour ni
+  // contre la discipline : on les retire simplement du dénominateur.
   function computeDiscipline(logs){
-    if (logs.length === 0) return 0;
-    const green = logs.filter(l => getColorCode(l) === "green").length;
-    return Math.round((green / logs.length) * 1000) / 10;
+    const counted = logs.filter(l => !l.excused_reason);
+    if (counted.length === 0) return 0;
+    const green = counted.filter(l => getColorCode(l) === "green").length;
+    return Math.round((green / counted.length) * 1000) / 10;
   }
 
   function computePerformance(logs){
-    const planned = logs.reduce((s,l)=>s+l.planned_hours,0);
-    const actual = logs.reduce((s,l)=>s+l.actual_hours,0);
+    const counted = logs.filter(l => !l.excused_reason);
+    const planned = counted.reduce((s,l)=>s+l.planned_hours,0);
+    const actual = counted.reduce((s,l)=>s+l.actual_hours,0);
     if (planned === 0) return 0;
     return Math.round((actual/planned)*1000)/10;
   }
 
   function computeHoursRatio(logs){
-    const planned = logs.reduce((s,l)=>s+l.planned_hours,0);
-    const actual = logs.reduce((s,l)=>s+l.actual_hours,0);
+    const counted = logs.filter(l => !l.excused_reason);
+    const planned = counted.reduce((s,l)=>s+l.planned_hours,0);
+    const actual = counted.reduce((s,l)=>s+l.actual_hours,0);
     const ratio = planned > 0 ? Math.min(actual/planned, 1.5) : 0;
     return { planned, actual, ratio };
   }
@@ -424,6 +445,15 @@ export function initJamsPlansApp() {
     let streak = 0, cursor = null;
     for (const log of sorted){
       const d = new Date(log.log_date+"T00:00:00");
+      // Un jour en exception ne casse pas la série : on l'ignore et on continue.
+      if (log.excused_reason){
+        if (cursor !== null){
+          const expected = new Date(cursor); expected.setDate(expected.getDate()-1);
+          if (d.getTime() !== expected.getTime()) break;
+          cursor = d;
+        }
+        continue;
+      }
       if (cursor === null){
         if (getColorCode(log) !== "green") break;
         streak = 1; cursor = d; continue;
@@ -464,6 +494,45 @@ export function initJamsPlansApp() {
     document.getElementById("obj-category-custom").style.display = e.target.value === "__custom" ? "block" : "none";
   });
 
+  // Objectif en cours de modification (bouton "Modifier" de la liste) — null
+  // quand le formulaire sert à créer un nouvel objectif.
+  let editingObjectiveId = null;
+  const STANDARD_CATEGORIES = ["Étude", "Travail", "Sport", "Langue", "Autre"];
+
+  function resetObjectiveForm(){
+    editingObjectiveId = null;
+    document.getElementById("obj-title").value = "";
+    document.getElementById("obj-start-date").value = "";
+    document.getElementById("obj-date").value = "";
+    document.getElementById("obj-hours").value = "10";
+    document.getElementById("obj-category-custom").value = "";
+    document.getElementById("obj-category-custom").style.display = "none";
+    document.getElementById("obj-category").value = "Étude";
+    document.getElementById("obj-submit-btn").textContent = "+ Ajouter";
+    document.getElementById("obj-cancel-edit-btn").style.display = "none";
+  }
+
+  function startEditingObjective(obj){
+    editingObjectiveId = obj.id;
+    document.getElementById("obj-title").value = obj.title;
+    const isStandard = STANDARD_CATEGORIES.includes(obj.category);
+    document.getElementById("obj-category").value = isStandard ? obj.category : "__custom";
+    document.getElementById("obj-category-custom").style.display = isStandard ? "none" : "block";
+    document.getElementById("obj-category-custom").value = isStandard ? "" : (obj.category || "");
+    document.getElementById("obj-start-date").value = obj.start_date || "";
+    document.getElementById("obj-date").value = obj.target_date || "";
+    document.getElementById("obj-hours").value = obj.weekly_hours_target;
+    document.getElementById("obj-submit-btn").textContent = "Enregistrer les modifications";
+    document.getElementById("obj-cancel-edit-btn").style.display = "inline-block";
+    document.querySelectorAll(".target-switch-btn").forEach(b=>b.classList.remove("active"));
+    document.querySelectorAll(".target-subview").forEach(s=>s.classList.remove("active"));
+    document.querySelector('.target-switch-btn[data-subview="objectif"]').classList.add("active");
+    document.getElementById("subview-objectif").classList.add("active");
+    document.getElementById("obj-title").scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  document.getElementById("obj-cancel-edit-btn").addEventListener("click", resetObjectiveForm);
+
   document.getElementById("objective-form").addEventListener("submit", async e=>{
     e.preventDefault();
     const title = document.getElementById("obj-title").value.trim();
@@ -476,6 +545,24 @@ export function initJamsPlansApp() {
     const date = document.getElementById("obj-date").value;
     const hours = parseFloat(document.getElementById("obj-hours").value) || 0;
     const year = date ? new Date(date+"T00:00:00").getFullYear() : new Date().getFullYear();
+
+    if (editingObjectiveId){
+      const existing = state.objectives.find(o=>o.id===editingObjectiveId);
+      if (!existing) { resetObjectiveForm(); return; }
+      const patch = { title, category, start_date: startDate || null, target_date: date || null, weekly_hours_target: hours };
+      if (SUPABASE_CONFIGURED){
+        try {
+          const updated = await db.updateObjective(editingObjectiveId, mapObjectiveToDb({ ...existing, ...patch }));
+          Object.assign(existing, updated);
+        } catch(err){ showToast("Erreur lors de la modification : " + err.message, "error"); return; }
+      } else {
+        Object.assign(existing, patch);
+      }
+      resetObjectiveForm();
+      renderAll();
+      return;
+    }
+
     const draft = { title, category, start_date: startDate || null, target_date: date || null, weekly_hours_target: hours, achieved: false, history: [], currentYear: year };
 
     if (SUPABASE_CONFIGURED){
@@ -487,13 +574,7 @@ export function initJamsPlansApp() {
       state.objectives.push({ id: nextId(), ...draft });
     }
 
-    document.getElementById("obj-title").value = "";
-    document.getElementById("obj-start-date").value = "";
-    document.getElementById("obj-date").value = "";
-    document.getElementById("obj-hours").value = "10";
-    document.getElementById("obj-category-custom").value = "";
-    document.getElementById("obj-category-custom").style.display = "none";
-    document.getElementById("obj-category").value = "Étude";
+    resetObjectiveForm();
     renderPlanning();
   });
 
@@ -570,6 +651,15 @@ export function initJamsPlansApp() {
       planningEnd = document.getElementById("agenda-planning-end").value;
       if (!planningStart || !planningEnd){
         showToast("Renseignez un début et une fin de créneau pour l'ajouter à la Journée type.", "error");
+        return;
+      }
+      // Un créneau d'agenda ne peut être posé directement sur la Journée type
+      // que s'il dure 1h ou moins — au-delà, ça relève de la structure de la
+      // journée type elle-même, qu'il faut éditer via son propre panneau.
+      const slotRanges = blockRanges(planningStart, planningEnd);
+      const slotMinutes = slotRanges.reduce((sum,[s,e])=>sum+(e-s), 0);
+      if (slotMinutes > 60){
+        showToast("Un créneau de plus d'1h ne peut pas être ajouté directement à la Journée type : ouvrez le panneau « Journée type » dans Check-liste pour créer ou modifier ce bloc.", "error");
         return;
       }
       // Même règle que pour les blocs de la journée type : pas de chevauchement
@@ -712,10 +802,12 @@ export function initJamsPlansApp() {
           </div>
           <div style="display:flex; gap:12px; align-items:center;">
             <button class="achieve-toggle">${obj.achieved ? "Marquer non atteint" : "Marquer atteint"}</button>
-            ${!obj.achieved ? '<button class="continue-btn">Poursuivre en N+1</button>' : ""}
+            <button class="continue-btn edit-obj-btn">Modifier</button>
+            ${!obj.achieved ? '<button class="continue-btn continue-year-btn">Poursuivre en N+1</button>' : ""}
           </div>
         `;
         li.querySelector(".del-btn").addEventListener("click", ()=>deleteObjective(obj.id));
+        li.querySelector(".edit-obj-btn").addEventListener("click", ()=>startEditingObjective(obj));
         li.querySelector(".achieve-toggle").addEventListener("click", async ()=>{
           const nextAchieved = !obj.achieved;
           if (SUPABASE_CONFIGURED){
@@ -726,7 +818,7 @@ export function initJamsPlansApp() {
           }
           renderAll();
         });
-        const continueBtn = li.querySelector(".continue-btn");
+        const continueBtn = li.querySelector(".continue-year-btn");
         if (continueBtn){
           continueBtn.addEventListener("click", ()=>continueObjectiveToNextYear(obj.id));
         }
@@ -756,9 +848,104 @@ export function initJamsPlansApp() {
       pillsWrap.appendChild(pill);
     });
 
+    renderObjectiveAlerts(pursuedObjectives);
     renderRoutineSection();
     renderArchive();
+    renderGantt();
   }
+
+  // Deux objectifs "se chevauchent" si leurs fenêtres [start_date, target_date]
+  // ont une intersection non vide (les deux dates doivent être renseignées
+  // des deux côtés pour pouvoir comparer).
+  function findOverlappingObjectivePairs(objectives){
+    const pairs = [];
+    for (let i=0; i<objectives.length; i++){
+      for (let j=i+1; j<objectives.length; j++){
+        const a = objectives[i], b = objectives[j];
+        if (!a.start_date || !a.target_date || !b.start_date || !b.target_date) continue;
+        if (a.start_date <= b.target_date && b.start_date <= a.target_date){
+          pairs.push([a, b]);
+        }
+      }
+    }
+    return pairs;
+  }
+
+  // Bannière d'alerte au-dessus de la liste d'objectifs : chevauchements de
+  // dates + rappel personnalisé si trop d'objectifs sont menés de front.
+  function renderObjectiveAlerts(pursuedObjectives){
+    const wrap = document.getElementById("objective-alerts");
+    if (!wrap) return;
+    const alerts = [];
+
+    if (pursuedObjectives.length >= 3){
+      const name = (state.profile.firstName || "").trim();
+      alerts.push(`<p class="limit-alert">Attention${name ? " " + escapeHtml(name) : ""}, tu suis ${pursuedObjectives.length} objectifs à la fois. Ne te disperse pas, il est conseillé de se concentrer sur 1 ou 2 à la fois.</p>`);
+    }
+
+    const overlaps = findOverlappingObjectivePairs(pursuedObjectives);
+    overlaps.forEach(([a,b])=>{
+      alerts.push(`<p class="limit-alert">Les objectifs "${escapeHtml(a.title)}" et "${escapeHtml(b.title)}" se chevauchent (${formatDateRangeFr(a.start_date, a.target_date)} / ${formatDateRangeFr(b.start_date, b.target_date)}).</p>`);
+    });
+
+    wrap.innerHTML = alerts.join("");
+  }
+
+  // =========================================================
+  // GANTT : tous les objectifs de l'année sélectionnée, étalés sur une
+  // frise annuelle, avec leur % de progression temporelle superposé.
+  // =========================================================
+  function renderGantt(){
+    const wrap = document.getElementById("gantt-chart");
+    if (!wrap) return;
+    const year = state.selectedAppYear === "all" ? new Date().getFullYear() : parseInt(state.selectedAppYear);
+    const yearStart = new Date(year, 0, 1).getTime();
+    const yearEnd = new Date(year + 1, 0, 1).getTime();
+    const yearSpan = yearEnd - yearStart;
+
+    const objectives = state.objectives.filter(o=>{
+      if (!o.start_date || !o.target_date) return false;
+      const s = new Date(o.start_date+"T00:00:00").getTime();
+      const e = new Date(o.target_date+"T00:00:00").getTime();
+      return e >= yearStart && s < yearEnd;
+    });
+
+    if (objectives.length === 0){
+      wrap.innerHTML = emptyStateHtml(`Aucun objectif avec des dates couvrant ${year}.`);
+      return;
+    }
+
+    const monthLabelsHtml = MONTH_NAMES_SHORT.map(m=>`<span>${m}</span>`).join("");
+
+    const rowsHtml = objectives.map(obj=>{
+      const s = Math.max(new Date(obj.start_date+"T00:00:00").getTime(), yearStart);
+      const e = Math.min(new Date(obj.target_date+"T00:00:00").getTime(), yearEnd);
+      const leftPct = ((s - yearStart) / yearSpan) * 100;
+      const widthPct = Math.max(((e - s) / yearSpan) * 100, 1);
+      const time = objectiveTimeProgress(obj);
+      const pct = time ? time.pct : 0;
+      return `
+        <div class="gantt-row">
+          <div class="gantt-row-label">${escapeHtml(obj.title)}<span class="cat-badge" style="background:${categoryColor(obj.category || "Autre")};">${escapeHtml(obj.category || "Autre")}</span></div>
+          <div class="gantt-track">
+            <div class="gantt-bar" style="left:${leftPct}%; width:${widthPct}%;">
+              <div class="gantt-bar-fill" style="width:${pct}%;"></div>
+              <span class="gantt-bar-pct">${pct}%</span>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    wrap.innerHTML = `
+      <div class="gantt-chart-inner">
+        <div class="gantt-months">${monthLabelsHtml}</div>
+        ${rowsHtml}
+      </div>
+    `;
+  }
+
+  const MONTH_NAMES_SHORT = ["Jan","Fév","Mar","Avr","Mai","Jun","Jul","Aoû","Sep","Oct","Nov","Déc"];
 
   function renderArchive(){
     const today = todayISO();
@@ -791,7 +978,10 @@ export function initJamsPlansApp() {
             <div class="obj-meta">${obj.weekly_hours_target}h / semaine${dateRangeText ? " · "+dateRangeText : ""}</div>
             ${objectiveProgressHtml(obj)}
           </div>
-          <button class="achieve-toggle">Marquer non atteint</button>
+          <div style="display:flex; gap:12px;">
+            <button class="achieve-toggle">Marquer non atteint</button>
+            <button class="continue-btn edit-obj-btn">Modifier</button>
+          </div>
         `;
         li.querySelector(".achieve-toggle").addEventListener("click", async ()=>{
           if (SUPABASE_CONFIGURED){
@@ -802,6 +992,7 @@ export function initJamsPlansApp() {
           }
           renderAll();
         });
+        li.querySelector(".edit-obj-btn").addEventListener("click", ()=>startEditingObjective(obj));
         successList.appendChild(li);
       });
     }
@@ -824,7 +1015,8 @@ export function initJamsPlansApp() {
           </div>
           <div style="display:flex; gap:12px;">
             <button class="achieve-toggle">Marquer atteint</button>
-            <button class="continue-btn">Poursuivre en N+1</button>
+            <button class="continue-btn edit-obj-btn">Modifier</button>
+            <button class="continue-btn continue-year-btn">Poursuivre en N+1</button>
           </div>
         `;
         li.querySelector(".achieve-toggle").addEventListener("click", async ()=>{
@@ -836,7 +1028,8 @@ export function initJamsPlansApp() {
           }
           renderAll();
         });
-        li.querySelector(".continue-btn").addEventListener("click", ()=>continueObjectiveToNextYear(obj.id));
+        li.querySelector(".edit-obj-btn").addEventListener("click", ()=>startEditingObjective(obj));
+        li.querySelector(".continue-year-btn").addEventListener("click", ()=>continueObjectiveToNextYear(obj.id));
         failureList.appendChild(li);
       });
     }
@@ -1011,6 +1204,10 @@ export function initJamsPlansApp() {
     return null;
   }
 
+  // Bloc en cours de modification via le formulaire (boutons "Modifier" de la
+  // légende) — null quand le formulaire sert à ajouter un nouveau bloc.
+  let editingDayTemplateBlockId = null;
+
   function getActiveTemplate(){
     return state.dayTemplates.find(t=>t.id===state.activeDayTemplateId) || state.dayTemplates[0];
   }
@@ -1028,8 +1225,8 @@ export function initJamsPlansApp() {
 
   // Anneau 24h : chaque bloc devient un segment coloré positionné par angle.
   // L'anneau se remplit visuellement à mesure que des heures sont bloquées ;
-  // les trous restés couleur neutre = temps non planifié. Cliquer un segment
-  // le supprime (pas de liste séparée à gérer).
+  // les trous restés couleur neutre = temps non planifié. Purement visuel :
+  // pour modifier ou supprimer un bloc, on passe par les boutons de la légende.
   function renderDayTemplateRing(){
     const wrap = document.getElementById("day-template-ring");
     const size = 260, cx = 130, cy = 130, r = 88, sw = 20;
@@ -1058,8 +1255,8 @@ export function initJamsPlansApp() {
       const dashoffset = C*(1-startFrac);
       return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${categoryColor(seg.block.label)}" stroke-width="${sw}"
         stroke-dasharray="${arcLen} ${C-arcLen}" stroke-dashoffset="${dashoffset}"
-        transform="rotate(-90 ${cx} ${cy})" class="dt-ring-seg" data-block-id="${seg.block.id}" style="cursor:pointer;">
-        <title>${escapeHtml(seg.block.label)} (${seg.block.start} à ${seg.block.end}), cliquer pour supprimer</title>
+        transform="rotate(-90 ${cx} ${cy})" class="dt-ring-seg" data-block-id="${seg.block.id}">
+        <title>${escapeHtml(seg.block.label)} (${seg.block.start} à ${seg.block.end})</title>
       </circle>`;
     }).join("");
 
@@ -1086,10 +1283,24 @@ export function initJamsPlansApp() {
         <text x="${cx}" y="${cy+16}" text-anchor="middle" font-size="10" fill="var(--muted)">bloquées / 24h</text>
       </svg>
     `;
+  }
 
-    wrap.querySelectorAll(".dt-ring-seg").forEach(seg=>{
-      seg.addEventListener("click", ()=>deleteDayTemplateBlock(seg.dataset.blockId));
-    });
+  // Barre de progression linéaire "Xh sur 24h utilisées", mise à jour à
+  // chaque ajout / modification / suppression d'un élément de journée type.
+  function renderDayTemplateProgress(){
+    const wrap = document.getElementById("day-template-progress");
+    if (!wrap) return;
+    const blocks = getActiveTemplate().blocks;
+    const totalMin = blocks.reduce((sum,b)=>{
+      const s = timeToMinutes(b.start), e = timeToMinutes(b.end);
+      return sum + (e > s ? (e - s) : (1440 - s + e));
+    }, 0);
+    const totalHours = Math.round((totalMin/60)*10)/10;
+    const pct = Math.min((totalMin/1440)*100, 100);
+    wrap.innerHTML = `
+      <div class="checkin-summary-bar-label"><span>Heures planifiées</span><span>${totalHours}h sur 24h</span></div>
+      <div class="checkin-summary-track"><div class="checkin-summary-fill" style="width:${pct}%; background:linear-gradient(90deg,#4C8FD6,#4CAF6D);"></div></div>
+    `;
   }
 
   // Légende : un repère par plage horaire, pour savoir exactement ce qui
@@ -1102,13 +1313,50 @@ export function initJamsPlansApp() {
       return;
     }
     legend.innerHTML = blocks.map(b=>`
-      <div class="dt-legend-item">
+      <div class="dt-legend-item" data-block-id="${b.id}">
         <span class="dt-swatch" style="background:${categoryColor(b.label)};"></span>
         <span>${escapeHtml(b.label)}</span>
         <span class="mono muted">${b.start}–${b.end}</span>
+        <span style="display:flex; gap:8px; margin-left:auto;">
+          <button type="button" class="achieve-toggle dt-edit-btn" style="margin-top:0;">Modifier</button>
+          <button type="button" class="del-btn dt-delete-btn">Supprimer</button>
+        </span>
       </div>
     `).join("");
+
+    legend.querySelectorAll(".dt-edit-btn").forEach(btn=>{
+      btn.addEventListener("click", ()=>{
+        const id = btn.closest("[data-block-id]").dataset.blockId;
+        const block = getActiveTemplate().blocks.find(b=>b.id===id);
+        if (!block) return;
+        editingDayTemplateBlockId = id;
+        document.getElementById("dt-start").value = block.start;
+        document.getElementById("dt-end").value = block.end;
+        document.getElementById("dt-label").value = block.label;
+        document.getElementById("dt-submit-btn").textContent = "Enregistrer les modifications";
+        document.getElementById("dt-cancel-edit-btn").style.display = "inline-block";
+        document.getElementById("dt-label").focus();
+      });
+    });
+    legend.querySelectorAll(".dt-delete-btn").forEach(btn=>{
+      btn.addEventListener("click", ()=>{
+        const id = btn.closest("[data-block-id]").dataset.blockId;
+        if (editingDayTemplateBlockId === id) cancelDayTemplateEdit();
+        deleteDayTemplateBlock(id);
+      });
+    });
   }
+
+  function cancelDayTemplateEdit(){
+    editingDayTemplateBlockId = null;
+    document.getElementById("dt-start").value = "09:00";
+    document.getElementById("dt-end").value = "10:00";
+    document.getElementById("dt-label").value = "";
+    document.getElementById("dt-submit-btn").textContent = "+ Ajouter";
+    document.getElementById("dt-cancel-edit-btn").style.display = "none";
+  }
+
+  document.getElementById("dt-cancel-edit-btn").addEventListener("click", cancelDayTemplateEdit);
 
   // Pills de sélection de période + formulaire de création d'une nouvelle
   // journée type bornée à une plage de dates.
@@ -1135,6 +1383,7 @@ export function initJamsPlansApp() {
   function renderDayTemplate(){
     renderDayTemplatePeriods();
     renderDayTemplateRing();
+    renderDayTemplateProgress();
     renderDayTemplateLegend();
   }
 
@@ -1194,15 +1443,25 @@ export function initJamsPlansApp() {
     const label = document.getElementById("dt-label").value.trim();
     if (!start || !end || !label) return;
 
-    const overlapping = findOverlappingBlock(start, end, null);
+    const overlapping = findOverlappingBlock(start, end, editingDayTemplateBlockId);
     if (overlapping){
       showToast(`Ce créneau chevauche "${overlapping.label}" (${overlapping.start}–${overlapping.end}).`, "error");
       return;
     }
 
-    getActiveTemplate().blocks.push({ id: nextId(), start, end, label });
+    if (editingDayTemplateBlockId){
+      const block = getActiveTemplate().blocks.find(b=>b.id===editingDayTemplateBlockId);
+      if (block){ block.start = start; block.end = end; block.label = label; }
+      cancelDayTemplateEdit();
+    } else {
+      getActiveTemplate().blocks.push({ id: nextId(), start, end, label });
+      // Auto-chaînage : la fin du bloc qu'on vient d'ajouter devient le début
+      // proposé pour le prochain, pour ne pas ressaisir l'heure à chaque fois.
+      document.getElementById("dt-start").value = end;
+      document.getElementById("dt-end").value = "";
+      document.getElementById("dt-label").value = "";
+    }
     await saveDayTemplates();
-    document.getElementById("dt-label").value = "";
     renderDayTemplate();
   });
 
@@ -1473,8 +1732,17 @@ export function initJamsPlansApp() {
           <input type="number" min="0" step="0.25" class="actual-hours mono" style="width:80px;" value="${existing ? existing.actual_hours : item.planned_hours}" />
           <span class="muted" style="font-size:12px;">/ ${item.planned_hours}h</span>
         </div>
+        <div style="margin-top:8px;">
+          <label class="muted" style="font-size:12px;">Exception</label>
+          <select class="excuse-select" style="width:auto; margin-left:6px;">
+            <option value="">Aucune (jour normal)</option>
+            <option value="malade">Malade</option>
+            <option value="conges_payes">Congés payés</option>
+          </select>
+        </div>
         <button class="btn savebtn">Enregistrer</button>
       `;
+      card.querySelector(".excuse-select").value = existing && existing.excused_reason ? existing.excused_reason : "";
       let currentStatus = existing ? existing.status : "done";
       card.querySelectorAll(".status-btn").forEach(b=>{
         if (b.dataset.status === currentStatus) b.classList.add("active");
@@ -1487,6 +1755,7 @@ export function initJamsPlansApp() {
       const saveBtn = card.querySelector(".savebtn");
       saveBtn.addEventListener("click", async ()=>{
         const actual = parseFloat(card.querySelector(".actual-hours").value) || 0;
+        const excusedReason = card.querySelector(".excuse-select").value || null;
         const idx = state.dailyLogs.findIndex(l=> l.log_date===date && (
           item.routine_id ? l.routine_id===item.routine_id : l.agenda_task_id===item.agenda_task_id
         ));
@@ -1498,6 +1767,7 @@ export function initJamsPlansApp() {
           status: currentStatus,
           planned_hours: item.planned_hours,
           actual_hours: actual,
+          excused_reason: excusedReason,
         };
 
         if (SUPABASE_CONFIGURED){
@@ -1825,10 +2095,11 @@ export function initJamsPlansApp() {
 
   function renderProfile(){
     document.getElementById("profile-firstname").value = state.profile.firstName;
-    document.getElementById("profile-lastname").value = state.profile.lastName;
     document.getElementById("profile-email").value = state.profile.email;
     document.getElementById("reminder-enabled").checked = state.reminder.enabled;
     document.getElementById("reminder-time").value = state.reminder.time;
+    document.getElementById("reminder-webhook").value = state.reminder.webhookUrl || "";
+    document.getElementById("reminder-channel").value = state.reminder.channel || "email";
     document.getElementById("reminder-phone").value = state.reminder.phone || "";
     document.getElementById("reminder-timezone").value = state.reminder.timezone || "Europe/Paris";
     renderWeeklyLimits();
@@ -1841,7 +2112,6 @@ export function initJamsPlansApp() {
     msg.classList.remove("error", "success");
 
     const firstName = document.getElementById("profile-firstname").value.trim();
-    const lastName = document.getElementById("profile-lastname").value.trim();
     const email = document.getElementById("profile-email").value.trim();
     const currentPassword = document.getElementById("profile-current-password").value;
     const newPassword = document.getElementById("profile-new-password").value;
@@ -1891,7 +2161,7 @@ export function initJamsPlansApp() {
           if (updateError) throw updateError;
         }
 
-        await db.upsertProfile(state.userId, { first_name: firstName, last_name: lastName });
+        await db.upsertProfile(state.userId, { first_name: firstName });
       } catch(err){
         msg.textContent = "Erreur : " + err.message;
         msg.classList.add("error");
@@ -1900,7 +2170,6 @@ export function initJamsPlansApp() {
     }
 
     state.profile.firstName = firstName || state.profile.firstName;
-    state.profile.lastName = lastName;
     state.profile.email = email;
     if (wantsPasswordChange) state.profile.password = newPassword;
 
@@ -1965,11 +2234,25 @@ export function initJamsPlansApp() {
     msg.classList.remove("error", "success");
     const enabled = document.getElementById("reminder-enabled").checked;
     const time = document.getElementById("reminder-time").value || "20:00";
+    const webhookUrl = document.getElementById("reminder-webhook").value.trim();
+    const channel = document.getElementById("reminder-channel").value || "email";
     const phone = document.getElementById("reminder-phone").value.trim();
     const timezone = document.getElementById("reminder-timezone").value;
 
     if (phone && !/^\+[1-9]\d{6,14}$/.test(phone)){
       msg.textContent = "Le numéro doit être au format international, ex : +33612345678.";
+      msg.classList.add("error");
+      return;
+    }
+
+    if (webhookUrl && !/^https?:\/\//i.test(webhookUrl)){
+      msg.textContent = "Le webhook Make.com doit être une URL commençant par https://.";
+      msg.classList.add("error");
+      return;
+    }
+
+    if (channel === "sms" && !phone){
+      msg.textContent = "Renseignez un numéro de téléphone pour envoyer le rappel par SMS.";
       msg.classList.add("error");
       return;
     }
@@ -1986,15 +2269,22 @@ export function initJamsPlansApp() {
     state.reminder.time = time;
     state.reminder.phone = phone;
     state.reminder.timezone = timezone;
+    state.reminder.webhookUrl = webhookUrl;
+    state.reminder.channel = channel;
     reminderFiredForToday = null;
 
     if (SUPABASE_CONFIGURED){
-      try { await db.upsertProfile(state.userId, { reminder_enabled: enabled, reminder_time: time, phone: phone || null, timezone }); }
+      try {
+        await db.upsertProfile(state.userId, {
+          reminder_enabled: enabled, reminder_time: time, phone: phone || null, timezone,
+          reminder_webhook_url: webhookUrl || null, reminder_channel: channel,
+        });
+      }
       catch(err){ msg.textContent = "Erreur : " + err.message; msg.classList.add("error"); return; }
     }
 
     if (!msg.textContent){
-      msg.textContent = phone ? "Rappel enregistré (navigateur + SMS)." : "Rappel enregistré.";
+      msg.textContent = webhookUrl ? `Rappel enregistré (navigateur + Make.com, canal ${channel === "sms" ? "SMS" : "mail"}).` : "Rappel enregistré (navigateur).";
       msg.classList.add("success");
     }
   });
@@ -2103,6 +2393,11 @@ export function initJamsPlansApp() {
       btn.classList.add("active");
       document.getElementById("auth-submit").textContent = authMode === "signin" ? "Se connecter" : "Créer un compte";
       document.getElementById("auth-message").textContent = "";
+      const isSignup = authMode === "signup";
+      document.querySelectorAll(".auth-signup-only").forEach(el=>{
+        el.style.display = isSignup ? "block" : "none";
+        el.required = isSignup;
+      });
     });
   });
 
@@ -2120,12 +2415,24 @@ export function initJamsPlansApp() {
         if (error) throw error;
         await enterApp(data.session);
       } else {
-        const { data, error } = await supabaseClient.auth.signUp({ email, password });
+        const firstName = document.getElementById("auth-firstname").value.trim();
+        const phone = document.getElementById("auth-phone").value.trim();
+        const { data, error } = await supabaseClient.auth.signUp({
+          email, password,
+          options: { data: { first_name: firstName, phone: phone || null } },
+        });
         if (error) throw error;
         if (!data.session){
           msg.textContent = "Compte créé. Vérifiez votre boîte mail pour confirmer votre adresse, puis connectez-vous.";
           msg.classList.add("success");
           return;
+        }
+        // Filet de sécurité : si le trigger handle_new_user (déclenché à l'inscription)
+        // n'a pas encore posé prénom/téléphone au moment où on lit le profil dans
+        // enterApp, on les renvoie explicitement ici.
+        if (firstName || phone){
+          try { await db.upsertProfile(data.session.user.id, { first_name: firstName || undefined, phone: phone || undefined }); }
+          catch(_e){ /* pas bloquant : enterApp rechargera de toute façon le profil */ }
         }
         await enterApp(data.session);
       }
@@ -2213,11 +2520,12 @@ export function initJamsPlansApp() {
       state.dailyLogs = loaded.dailyLogs;
       if (loaded.profile){
         state.profile.firstName = loaded.profile.first_name || state.profile.firstName;
-        state.profile.lastName = loaded.profile.last_name || "";
         state.reminder.enabled = !!loaded.profile.reminder_enabled;
         state.reminder.time = (loaded.profile.reminder_time || "20:00").slice(0,5);
         state.reminder.phone = loaded.profile.phone || "";
         state.reminder.timezone = loaded.profile.timezone || "Europe/Paris";
+        state.reminder.webhookUrl = loaded.profile.reminder_webhook_url || "";
+        state.reminder.channel = loaded.profile.reminder_channel || "email";
         state.weeklyLimits = loaded.profile.weekly_limits || {};
         const loadedTemplates = loaded.profile.day_template;
         state.dayTemplates = (Array.isArray(loadedTemplates) && loadedTemplates.length > 0 && loadedTemplates[0].blocks)

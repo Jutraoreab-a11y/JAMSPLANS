@@ -3,13 +3,15 @@
 // =========================================================
 // Déclenchée toutes les minutes par pg_cron (voir supabase/schema.sql,
 // section CRON EN BAS DE FICHIER). Pour chaque profil ayant activé son
-// rappel, si l'heure locale correspond à l'heure choisie ET qu'il reste
-// des tâches non cochées aujourd'hui, envoie un SMS via Twilio.
+// rappel et renseigné un webhook Make.com, si l'heure locale correspond à
+// l'heure choisie ET qu'il reste des tâches non cochées aujourd'hui,
+// envoie une requête POST à ce webhook — c'est le scénario Make.com de
+// l'utilisateur qui décide ensuite comment envoyer réellement le message
+// (email, SMS, WhatsApp...), en fonction du canal choisi dans Profil.
 //
-// Secrets requis (à définir avec `supabase secrets set`) :
-//   TWILIO_ACCOUNT_SID
-//   TWILIO_AUTH_TOKEN
-//   TWILIO_FROM_NUMBER   (numéro Twilio au format E.164, ex: +33757000000)
+// Aucun secret à configurer ici : chaque profil porte sa propre URL de
+// webhook (colonne profiles.reminder_webhook_url), branchée par
+// l'utilisateur lui-même dans Profil > Rappel du soir.
 //
 // SUPABASE_URL et SUPABASE_SERVICE_ROLE_KEY sont fournis automatiquement
 // par l'environnement des Edge Functions, pas besoin de les définir.
@@ -19,9 +21,6 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const TWILIO_ACCOUNT_SID = Deno.env.get("TWILIO_ACCOUNT_SID")!;
-const TWILIO_AUTH_TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN")!;
-const TWILIO_FROM_NUMBER = Deno.env.get("TWILIO_FROM_NUMBER")!;
 
 const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
 
@@ -43,20 +42,19 @@ function localParts(timezone: string) {
   };
 }
 
-async function sendSms(to: string, body: string) {
-  const url = `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`;
-  const auth = btoa(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`);
-  const res = await fetch(url, {
+// ---------------------------------------------------------
+// Envoie l'événement au scénario Make.com de l'utilisateur. C'est Make qui
+// route ensuite vers Email ou SMS selon le "channel" transmis ici.
+// ---------------------------------------------------------
+async function triggerMakeWebhook(webhookUrl: string, payload: Record<string, unknown>) {
+  const res = await fetch(webhookUrl, {
     method: "POST",
-    headers: {
-      "Authorization": `Basic ${auth}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: new URLSearchParams({ To: to, From: TWILIO_FROM_NUMBER, Body: body }),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Twilio error (${res.status}): ${text}`);
+    throw new Error(`Webhook Make.com error (${res.status}): ${text}`);
   }
 }
 
@@ -64,14 +62,15 @@ async function sendSms(to: string, body: string) {
 // Compte les tâches non cochées d'un utilisateur pour "aujourd'hui"
 // (dans son fuseau horaire) : routines actives ce jour de semaine +
 // tâches d'agenda dont la plage couvre cette date, moins celles déjà
-// pointées "done"/"partial" avec des heures réelles > 0.
+// pointées "done"/"partial" avec des heures réelles > 0, ou marquées en
+// exception (malade / congés payés — voir daily_logs.excused_reason).
 // ---------------------------------------------------------
 async function countUnfinishedTasks(userId: string, dateStr: string, dayOfWeek: number) {
   const [{ data: objectives }, { data: routines }, { data: agendaTasks }, { data: logs }] = await Promise.all([
     supabase.from("objectives").select("id,start_date,target_date").eq("user_id", userId).eq("is_active", true),
     supabase.from("routines").select("id,objective_id,day_of_week").eq("user_id", userId).eq("is_active", true).eq("day_of_week", dayOfWeek),
     supabase.from("agenda_tasks").select("id").eq("user_id", userId).eq("is_active", true).lte("start_date", dateStr).gte("end_date", dateStr),
-    supabase.from("daily_logs").select("routine_id,agenda_task_id,status,actual_hours").eq("user_id", userId).eq("log_date", dateStr),
+    supabase.from("daily_logs").select("routine_id,agenda_task_id,status,actual_hours,excused_reason").eq("user_id", userId).eq("log_date", dateStr),
   ]);
 
   const objectiveById = new Map((objectives ?? []).map((o: any) => [o.id, o]));
@@ -83,14 +82,14 @@ async function countUnfinishedTasks(userId: string, dateStr: string, dayOfWeek: 
     return true;
   });
 
-  const isDone = (log: any) => log && log.status !== "not_done" && log.actual_hours > 0;
+  const isSettled = (log: any) => log && (log.excused_reason || (log.status !== "not_done" && log.actual_hours > 0));
   const logsByRoutine = new Map((logs ?? []).filter((l: any) => l.routine_id).map((l: any) => [l.routine_id, l]));
   const logsByAgenda = new Map((logs ?? []).filter((l: any) => l.agenda_task_id).map((l: any) => [l.agenda_task_id, l]));
 
   const totalTasks = activeRoutines.length + (agendaTasks ?? []).length;
   const doneCount =
-    activeRoutines.filter((r: any) => isDone(logsByRoutine.get(r.id))).length +
-    (agendaTasks ?? []).filter((t: any) => isDone(logsByAgenda.get(t.id))).length;
+    activeRoutines.filter((r: any) => isSettled(logsByRoutine.get(r.id))).length +
+    (agendaTasks ?? []).filter((t: any) => isSettled(logsByAgenda.get(t.id))).length;
 
   return totalTasks - doneCount;
 }
@@ -98,9 +97,9 @@ async function countUnfinishedTasks(userId: string, dateStr: string, dayOfWeek: 
 Deno.serve(async () => {
   const { data: profiles, error } = await supabase
     .from("profiles")
-    .select("id, reminder_enabled, reminder_time, phone, timezone, last_reminder_sent_date")
+    .select("id, first_name, reminder_enabled, reminder_time, reminder_webhook_url, reminder_channel, phone, timezone, last_reminder_sent_date")
     .eq("reminder_enabled", true)
-    .not("phone", "is", null);
+    .not("reminder_webhook_url", "is", null);
 
   if (error) {
     return new Response(JSON.stringify({ error: error.message }), { status: 500 });
@@ -120,14 +119,30 @@ Deno.serve(async () => {
       const remaining = await countUnfinishedTasks(profile.id, date, dayOfWeek);
       if (remaining <= 0) { results[profile.id] = "rien à faire, pas d'envoi"; continue; }
 
-      const body = remaining === 1
+      const message = remaining === 1
         ? "JamsPlans : il te reste 1 tâche à valider aujourd'hui."
         : `JamsPlans : il te reste ${remaining} tâches à valider aujourd'hui.`;
 
-      await sendSms(profile.phone, body);
+      let email: string | null = null;
+      try {
+        const { data: userRes } = await supabase.auth.admin.getUserById(profile.id);
+        email = userRes?.user?.email ?? null;
+      } catch (_e) { /* on envoie quand même le webhook sans email si indisponible */ }
+
+      await triggerMakeWebhook(profile.reminder_webhook_url, {
+        userId: profile.id,
+        firstName: profile.first_name || "",
+        email,
+        phone: profile.phone || null,
+        channel: profile.reminder_channel || "email",
+        remaining,
+        message,
+        date,
+      });
+
       await supabase.from("profiles").update({ last_reminder_sent_date: date }).eq("id", profile.id);
       sent++;
-      results[profile.id] = "SMS envoyé";
+      results[profile.id] = "webhook déclenché";
     } catch (err) {
       results[profile.id] = `erreur: ${(err as Error).message}`;
     }

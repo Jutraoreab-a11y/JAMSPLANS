@@ -10,29 +10,29 @@ const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();
 
 const scheduler = () => {
+  // Chaque profil choisit sa propre heure de rappel (Profil > Rappel du
+  // soir) : on vérifie donc chaque minute si l'heure locale de l'un d'eux
+  // correspond ("/api/send-reminders" ne fait rien tant que ce n'est pas
+  // le cas, voir app/api/send-reminders/route.ts).
   cron.schedule(
-    '0 22 * * *',
+    '* * * * *',
     async () => {
       const targetUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/send-reminders`;
-      console.log(`[scheduler] Triggering reminders at 22:00: ${new Date().toISOString()}`);
 
       try {
         const response = await fetch(targetUrl, { method: 'GET' });
         const text = await response.text();
-
-        console.log(`[scheduler] Response status: ${response.status}`);
-        console.log(`[scheduler] Response body: ${text.slice(0, 500)}`);
+        if (response.status !== 200 || JSON.parse(text || '{}').sent > 0) {
+          console.log(`[scheduler] ${new Date().toISOString()} — status ${response.status} — ${text.slice(0, 500)}`);
+        }
       } catch (error) {
         console.error('[scheduler] Failed to call reminders API:', error);
       }
     },
-    {
-      timezone: 'Europe/Paris',
-      scheduled: true,
-    }
+    { scheduled: true }
   );
 
-  console.log('[scheduler] Daily 22:00 reminder task registered (Europe/Paris timezone).');
+  console.log('[scheduler] Reminder check registered (every minute — each profile keeps its own time/timezone).');
 };
 
 app.prepare().then(() => {
