@@ -347,6 +347,11 @@ export function initJamsPlansApp() {
     return logs;
   }
 
+  // URL fixe du scénario Make.com ("Rappel du soir - Envoi mail") : ce n'est
+  // plus un réglage éditable par l'utilisateur dans Profil (un seul scénario
+  // existe pour l'instant), donc elle est simplement codée en dur ici.
+  const JAMSPLANS_MAKE_WEBHOOK_URL = "https://hook.eu1.make.com/teu8k7bx0qxdrp92xpgi5v052dvbq89w";
+
   const state = {
     userId: null,
     profile: {
@@ -367,7 +372,7 @@ export function initJamsPlansApp() {
     dashboardRange: "week",
     dashboardYear: new Date().getFullYear(),
     dashboardMonth: new Date().getMonth(), // 0-11
-    reminder: { enabled: false, time: "20:00", timezone: "Europe/Paris", webhookUrl: "", channelEmail: true, channelSms: false },
+    reminder: { enabled: false, time: "20:00", timezone: "Europe/Paris", webhookUrl: JAMSPLANS_MAKE_WEBHOOK_URL, channelEmail: true, channelSms: false },
     weeklyLimits: SUPABASE_CONFIGURED ? {} : { "Étude": 15, "Travail": 40, "Sport": 8 },
     // Plusieurs journées type possibles, chacune valable sur une période
     // (ou "toujours" si period_start/period_end sont vides). Celle qui
@@ -2144,7 +2149,6 @@ export function initJamsPlansApp() {
     document.getElementById("profile-email").value = state.profile.email;
     document.getElementById("reminder-enabled").checked = state.reminder.enabled;
     document.getElementById("reminder-time").value = state.reminder.time;
-    document.getElementById("reminder-webhook").value = state.reminder.webhookUrl || "";
     document.getElementById("reminder-timezone").value = state.reminder.timezone || "Europe/Paris";
     renderWeeklyLimits();
   }
@@ -2278,14 +2282,8 @@ export function initJamsPlansApp() {
     msg.classList.remove("error", "success");
     const enabled = document.getElementById("reminder-enabled").checked;
     const time = document.getElementById("reminder-time").value || "20:00";
-    const webhookUrl = document.getElementById("reminder-webhook").value.trim();
+    const webhookUrl = JAMSPLANS_MAKE_WEBHOOK_URL;
     const timezone = document.getElementById("reminder-timezone").value;
-
-    if (webhookUrl && !/^https?:\/\//i.test(webhookUrl)){
-      msg.textContent = "Le webhook Make.com doit être une URL commençant par https://.";
-      msg.classList.add("error");
-      return;
-    }
 
     if (enabled && "Notification" in window && Notification.permission !== "granted"){
       const permission = await Notification.requestPermission();
@@ -2319,7 +2317,7 @@ export function initJamsPlansApp() {
     }
 
     if (!msg.textContent){
-      msg.textContent = webhookUrl ? "Rappel enregistré (navigateur + Make.com, par mail)." : "Rappel enregistré (navigateur).";
+      msg.textContent = "Rappel enregistré (navigateur + Make.com, par mail).";
       msg.classList.add("success");
     }
   });
@@ -2327,13 +2325,7 @@ export function initJamsPlansApp() {
   document.getElementById("reminder-test")?.addEventListener("click", async ()=>{
     const msg = document.getElementById("reminder-message");
     msg.classList.remove("error", "success");
-    const webhookUrl = document.getElementById("reminder-webhook").value.trim();
-
-    if (!webhookUrl){
-      msg.textContent = "Renseigne d'abord un webhook Make.com avant de tester.";
-      msg.classList.add("error");
-      return;
-    }
+    const webhookUrl = JAMSPLANS_MAKE_WEBHOOK_URL;
 
     try {
       const res = await fetch(webhookUrl, {
@@ -2623,7 +2615,7 @@ export function initJamsPlansApp() {
         state.reminder.enabled = !!loaded.profile.reminder_enabled;
         state.reminder.time = (loaded.profile.reminder_time || "20:00").slice(0,5);
         state.reminder.timezone = loaded.profile.timezone || "Europe/Paris";
-        state.reminder.webhookUrl = loaded.profile.reminder_webhook_url || "";
+        state.reminder.webhookUrl = loaded.profile.reminder_webhook_url || JAMSPLANS_MAKE_WEBHOOK_URL;
         // SMS retiré pour l'instant (pas de numéro Twilio) : uniquement mail.
         state.reminder.channelEmail = true;
         state.reminder.channelSms = false;
