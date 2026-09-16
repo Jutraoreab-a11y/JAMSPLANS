@@ -389,6 +389,22 @@ export function initJamsPlansApp() {
   // =========================================================
   let weatherTipDate = null; // évite de rappeler l'API plusieurs fois pour le même jour
 
+  // Icône selon le code météo WMO (Open-Meteo) : reflète directement le ciel
+  // (soleil, nuages, pluie...), indépendamment du conseil textuel ci-dessous
+  // qui lui tient aussi compte de la température et du vent.
+  function weatherIconForCode(code){
+    if (code >= 95) return "⛈️";
+    if ((code >= 71 && code <= 77) || code === 85 || code === 86) return "❄️";
+    if ((code >= 61 && code <= 67) || (code >= 80 && code <= 82)) return "🌧️";
+    if (code >= 51 && code <= 57) return "🌦️";
+    if (code === 45 || code === 48) return "🌫️";
+    if (code === 0) return "☀️";
+    if (code === 1) return "🌤️";
+    if (code === 2) return "⛅";
+    if (code === 3) return "☁️";
+    return "🌡️";
+  }
+
   function weatherAdviceSentence(code, tempC, precipitationMm, windKmh){
     // Codes météo WMO (norme utilisée par Open-Meteo) regroupés en grandes
     // familles : on ne cherche pas la précision, juste un conseil utile.
@@ -420,7 +436,10 @@ export function initJamsPlansApp() {
       const json = await res.json();
       const cur = json?.current;
       if (!cur) return null;
-      return weatherAdviceSentence(cur.weather_code, cur.temperature_2m, cur.precipitation, cur.wind_speed_10m);
+      return {
+        icon: weatherIconForCode(cur.weather_code),
+        sentence: weatherAdviceSentence(cur.weather_code, cur.temperature_2m, cur.precipitation, cur.wind_speed_10m),
+      };
     } catch(e){ return null; }
   }
 
@@ -430,11 +449,14 @@ export function initJamsPlansApp() {
   async function renderWeatherTip(){
     const box = document.getElementById("weather-tip");
     if (!box) return;
-    if (!state.prayerCity){ box.textContent = ""; return; }
+    if (!state.prayerCity){ box.innerHTML = ""; return; }
     const today = todayISO();
     if (weatherTipDate === today) return;
     const advice = await fetchWeatherAdvice(state.prayerCity);
-    if (advice){ weatherTipDate = today; box.textContent = advice; }
+    if (advice){
+      weatherTipDate = today;
+      box.innerHTML = `<span style="font-size:18px; vertical-align:middle;">${advice.icon}</span> ${escapeHtml(advice.sentence)}`;
+    }
   }
 
   // Petit récapitulatif texte des horaires du jour, affiché dans Profil.
