@@ -289,6 +289,112 @@ export function initJamsPlansApp() {
   }
 
   // =========================================================
+  // HORAIRES DE PRIÈRE — calculés via l'API publique Aladhan (gratuite, sans
+  // clé) à partir des coordonnées de la ville choisie dans Profil. On
+  // réutilise volontairement les mêmes villes que le fuseau horaire du
+  // rappel du soir, avec leurs coordonnées approximatives.
+  // =========================================================
+  const PRAYER_CITIES = [
+    { value: "", label: "Aucune (désactivé)" },
+    { value: "Europe/Paris", label: "Paris (France)", lat: 48.8566, lon: 2.3522 },
+    { value: "Europe/Brussels", label: "Bruxelles (Belgique)", lat: 50.8503, lon: 4.3517 },
+    { value: "Europe/London", label: "Londres (Royaume-Uni)", lat: 51.5074, lon: -0.1278 },
+    { value: "America/Montreal", label: "Montréal (Canada)", lat: 45.5019, lon: -73.5674 },
+    { value: "Africa/Abidjan", label: "Abidjan (Côte d'Ivoire)", lat: 5.3600, lon: -4.0083 },
+    { value: "Africa/Dakar", label: "Dakar (Sénégal)", lat: 14.7167, lon: -17.4677 },
+    { value: "Indian/Reunion", label: "Saint-Denis (La Réunion)", lat: -20.8789, lon: 55.4481 },
+  ];
+  const PRAYER_NAMES = ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"];
+  const PRAYER_LABEL_PREFIX = "🕌 ";
+
+  function addMinutesToTime(hhmm, minutesToAdd){
+    const [h, m] = hhmm.split(":").map(Number);
+    const total = (h * 60 + m + minutesToAdd + 1440) % 1440;
+    return String(Math.floor(total/60)).padStart(2,"0") + ":" + String(total%60).padStart(2,"0");
+  }
+
+  // Interroge l'API Aladhan pour les 5 horaires du jour à la ville donnée.
+  // Retourne { Fajr, Dhuhr, Asr, Maghrib, Isha } au format "HH:MM", ou null
+  // en cas d'échec (API indisponible, ville inconnue...).
+  async function fetchPrayerTimings(cityValue, dateStr){
+    const city = PRAYER_CITIES.find(c=>c.value===cityValue);
+    if (!city || !city.value) return null;
+    const [year, month, day] = dateStr.split("-");
+    const url = `https://api.aladhan.com/v1/timings/${day}-${month}-${year}?latitude=${city.lat}&longitude=${city.lon}&method=3&timezonestring=${encodeURIComponent(city.value)}`;
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      const json = await res.json();
+      const t = json?.data?.timings;
+      if (!t) return null;
+      const clean = (s)=> (s || "").split(" ")[0].slice(0,5);
+      return {
+        Fajr: clean(t.Fajr), Dhuhr: clean(t.Dhuhr), Asr: clean(t.Asr),
+        Maghrib: clean(t.Maghrib), Isha: clean(t.Isha),
+      };
+    } catch(e){ return null; }
+  }
+
+  // Régénère les 5 tâches d'agenda "🕌 Fajr/Dhuhr/Asr/..." du jour pour
+  // l'utilisateur, à partir de sa ville choisie dans Profil. Idempotent : si
+  // les 5 tâches du jour existent déjà, ne refait pas l'appel API. Appelée
+  // au chargement de l'app et juste après l'enregistrement d'une ville.
+  async function syncPrayerTimesForToday(){
+    if (!state.prayerCity) return;
+    const today = todayISO();
+    const already = state.agendaTasks.filter(t=>t.start_date===today && (t.label||"").startsWith(PRAYER_LABEL_PREFIX));
+    if (already.length >= PRAYER_NAMES.length) { renderPrayerTimesToday(); return; }
+
+    const timings = await fetchPrayerTimings(state.prayerCity, today);
+    if (!timings) return;
+
+    // Retire d'éventuelles entrées partielles/périmées du jour avant de
+    // réinsérer les 5 fraîches (changement de ville, appel précédent
+    // incomplet...).
+    for (const t of already){
+      if (SUPABASE_CONFIGURED){ try { await db.deleteAgendaTask(t.id); } catch(e){ /* tant pis, on continue */ } }
+      state.agendaTasks = state.agendaTasks.filter(x=>x.id!==t.id);
+    }
+
+    for (const name of PRAYER_NAMES){
+      const start = timings[name];
+      if (!start) continue;
+      const draft = {
+        start_date: today, end_date: today, label: PRAYER_LABEL_PREFIX + name,
+        objective_id: null, is_priority: false,
+        // planned_hours volontairement non-nul (≈3 min) : ainsi, cocher
+        // "Fait" avec la durée par défaut compte bien comme réalisé partout
+        // où le calcul se base sur actual_hours > 0 (calendrier, discipline,
+        // rappel du soir), sans fausser sensiblement les totaux d'heures.
+        planned_hours: 0.05,
+        planning_start: start, planning_end: addMinutesToTime(start, 15),
+      };
+      if (SUPABASE_CONFIGURED){
+        try { state.agendaTasks.push(await db.insertAgendaTask(state.userId, draft)); }
+        catch(e){ /* pas grave, on retentera au prochain chargement */ }
+      } else {
+        state.agendaTasks.push({ id: nextId(), ...draft });
+      }
+    }
+    renderAgenda();
+    renderCheckin();
+    renderPrayerTimesToday();
+  }
+
+  // Petit récapitulatif texte des horaires du jour, affiché dans Profil.
+  function renderPrayerTimesToday(){
+    const box = document.getElementById("prayer-times-today");
+    if (!box) return;
+    if (!state.prayerCity){ box.textContent = ""; return; }
+    const today = todayISO();
+    const todays = state.agendaTasks.filter(t=>t.start_date===today && (t.label||"").startsWith(PRAYER_LABEL_PREFIX));
+    if (todays.length === 0){ box.textContent = "Calcul des horaires du jour…"; return; }
+    const order = PRAYER_NAMES;
+    const sorted = [...todays].sort((a,b)=>order.indexOf(a.label.slice(PRAYER_LABEL_PREFIX.length)) - order.indexOf(b.label.slice(PRAYER_LABEL_PREFIX.length)));
+    box.textContent = "Aujourd'hui : " + sorted.map(t=>`${t.label.slice(PRAYER_LABEL_PREFIX.length)} ${t.planning_start}`).join(" · ");
+  }
+
+  // =========================================================
   // DONNÉES DE DÉMO (mode local uniquement) — toutes calées en relatif
   // par rapport à "aujourd'hui" pour rester cohérentes quel que soit le
   // jour d'ouverture du fichier. Sert à voir tous les calculs (scores,
@@ -388,6 +494,7 @@ export function initJamsPlansApp() {
     dashboardYear: new Date().getFullYear(),
     dashboardMonth: new Date().getMonth(), // 0-11
     reminder: { enabled: false, time: "20:00", timezone: "Europe/Paris", webhookUrl: JAMSPLANS_MAKE_WEBHOOK_URL, channelEmail: true, channelSms: false },
+    prayerCity: "",
     weeklyLimits: SUPABASE_CONFIGURED ? {} : { "Étude": 15, "Travail": 40, "Sport": 8 },
     // Plusieurs journées type possibles, chacune valable sur une période
     // (ou "toujours" si period_start/period_end sont vides). Celle qui
@@ -787,14 +894,16 @@ export function initJamsPlansApp() {
       const dateFmt = new Date(date+"T00:00:00").toLocaleDateString("fr-FR", { weekday:"long", day:"numeric", month:"long" });
       const items = byDate[date].map(t=>{
         const cat = t.objective_id ? categoryOfObjective(t.objective_id) : "Agenda";
+        const isPrayer = (t.label||"").startsWith(PRAYER_LABEL_PREFIX);
         const rangeText = t.end_date && t.end_date !== t.start_date ? ` → ${formatDateFr(t.end_date)}` : "";
         const slotText = t.planning_start && t.planning_end ? ` · ${t.planning_start}–${t.planning_end}` : "";
+        const metaText = isPrayer ? `${t.planning_start}${rangeText}` : `${t.planned_hours}h${rangeText}${slotText}`;
         return `
           <div class="agenda-item">
             <div>
               <span class="cat-badge" style="background:${categoryColor(cat)};">${escapeHtml(cat)}</span>${t.is_priority ? '<span class="priority-badge">Prioritaire</span>' : ""}
               <div style="margin-top:4px;">${escapeHtml(t.label)}</div>
-              <div class="agenda-meta">${t.planned_hours}h${rangeText}${slotText}</div>
+              <div class="agenda-meta">${metaText}</div>
             </div>
             <button class="del-btn" data-agenda-id="${t.id}" title="Supprimer">Suppr.</button>
           </div>
@@ -1819,20 +1928,21 @@ export function initJamsPlansApp() {
         item.routine_id ? l.routine_id===item.routine_id : l.agenda_task_id===item.agenda_task_id
       ));
       const cat = item.objective_id ? categoryOfObjective(item.objective_id) : "Agenda";
+      const isPrayer = (item.label||"").startsWith(PRAYER_LABEL_PREFIX);
       const card = document.createElement("div");
       card.className = "card";
       card.style.marginBottom = "12px";
       card.innerHTML = `
         <div style="display:flex; justify-content:space-between; align-items:center;">
           <strong style="font-size:14px;">${escapeHtml(item.label)}<span class="cat-badge" style="background:${categoryColor(cat)};">${escapeHtml(cat)}</span>${item.is_priority ? '<span class="priority-badge">Prioritaire</span>' : ""}</strong>
-          <span class="mono muted" style="font-size:12px;">${item.planned_hours}h prévues</span>
+          ${isPrayer ? "" : `<span class="mono muted" style="font-size:12px;">${item.planned_hours}h prévues</span>`}
         </div>
         <div class="status-row">
           <button class="status-btn" data-status="done">Fait</button>
           <button class="status-btn" data-status="partial">Partiel</button>
           <button class="status-btn" data-status="not_done">Non fait</button>
         </div>
-        <div style="margin-top:10px; display:flex; align-items:center; gap:8px;">
+        <div style="margin-top:10px; display:flex; align-items:center; gap:8px; ${isPrayer ? "display:none;" : ""}">
           <label class="muted" style="font-size:12px;">Heures réalisées</label>
           <input type="number" min="0" step="0.25" class="actual-hours mono" style="width:80px;" value="${existing ? existing.actual_hours : item.planned_hours}" />
           <span class="muted" style="font-size:12px;">/ ${item.planned_hours}h</span>
@@ -2236,8 +2346,33 @@ export function initJamsPlansApp() {
     document.getElementById("reminder-enabled").checked = state.reminder.enabled;
     document.getElementById("reminder-time").value = state.reminder.time;
     document.getElementById("reminder-timezone").value = state.reminder.timezone || "Europe/Paris";
+    const prayerSelect = document.getElementById("prayer-city");
+    if (prayerSelect && prayerSelect.options.length === 0){
+      PRAYER_CITIES.forEach(c=>{
+        const opt = document.createElement("option");
+        opt.value = c.value; opt.textContent = c.label;
+        prayerSelect.appendChild(opt);
+      });
+    }
+    if (prayerSelect) prayerSelect.value = state.prayerCity || "";
+    renderPrayerTimesToday();
     renderWeeklyLimits();
   }
+
+  document.getElementById("prayer-save")?.addEventListener("click", async ()=>{
+    const msg = document.getElementById("prayer-message");
+    msg.classList.remove("error", "success");
+    const cityValue = document.getElementById("prayer-city").value;
+    state.prayerCity = cityValue;
+    if (SUPABASE_CONFIGURED){
+      try { await db.upsertProfile(state.userId, { prayer_city: cityValue || null }); }
+      catch(err){ msg.textContent = "Erreur : " + err.message; msg.classList.add("error"); return; }
+    }
+    msg.textContent = cityValue ? "Ville enregistrée, calcul des horaires du jour…" : "Horaires de prière désactivés.";
+    msg.classList.add("success");
+    if (cityValue) await syncPrayerTimesForToday();
+    else renderPrayerTimesToday();
+  });
 
   const profileForm = document.getElementById("profile-form");
   profileForm.addEventListener("submit", async e=>{
@@ -2705,6 +2840,7 @@ export function initJamsPlansApp() {
         // SMS retiré pour l'instant (pas de numéro Twilio) : uniquement mail.
         state.reminder.channelEmail = true;
         state.reminder.channelSms = false;
+        state.prayerCity = loaded.profile.prayer_city || "";
         state.weeklyLimits = loaded.profile.weekly_limits || {};
         const loadedTemplates = loaded.profile.day_template;
         state.dayTemplates = (Array.isArray(loadedTemplates) && loadedTemplates.length > 0 && loadedTemplates[0].blocks)
@@ -2721,6 +2857,9 @@ export function initJamsPlansApp() {
     document.getElementById("app-root").style.display = "block";
     document.getElementById("signout-btn").style.display = "inline";
     renderAll();
+    // Régénère au besoin les horaires de prière du jour (pas d'appel si déjà
+    // faites aujourd'hui) — après renderAll() pour ne pas retarder l'affichage.
+    syncPrayerTimesForToday();
   }
 
   async function bootstrap(){

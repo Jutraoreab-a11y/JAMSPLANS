@@ -134,6 +134,7 @@ create table if not exists public.profiles (
   last_reminder_sent_date date,                         -- évite les doublons d'envoi le même jour
   weekly_limits jsonb not null default '{}'::jsonb,     -- ex: { "Travail": 40, "Sport": 8 }
   day_template jsonb not null default '[]'::jsonb,      -- ex: [{ "start": "23:00", "end": "08:00", "label": "Sommeil" }, ...]
+  prayer_city text,                                     -- ville choisie pour les horaires de prière (ex: 'Africa/Abidjan') ; vide = désactivé
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -149,6 +150,10 @@ alter table public.profiles add column if not exists reminder_channel text not n
 -- choix unique reminder_channel ci-dessus (conservée pour compat).
 alter table public.profiles add column if not exists reminder_channel_email boolean not null default true;
 alter table public.profiles add column if not exists reminder_channel_sms boolean not null default false;
+-- Horaires de prière : ville choisie par l'utilisateur (une des valeurs du
+-- menu Profil, ex: 'Africa/Abidjan') servant à calculer les 5 horaires du
+-- jour via l'API Aladhan ; NULL/vide désactive la fonctionnalité.
+alter table public.profiles add column if not exists prayer_city text;
 
 -- Crée automatiquement une ligne profiles à l'inscription (signup)
 create or replace function public.handle_new_user()
