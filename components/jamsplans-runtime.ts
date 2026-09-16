@@ -381,6 +381,62 @@ export function initJamsPlansApp() {
     renderPrayerTimesToday();
   }
 
+  // =========================================================
+  // MÉTÉO DU JOUR — un simple conseil en une phrase (pas un vrai tableau de
+  // bord météo), à partir de la même ville que les horaires de prière et de
+  // l'API publique gratuite Open-Meteo (sans clé). But volontairement
+  // minimaliste : "il pleut, prends une veste et un parapluie", pas plus.
+  // =========================================================
+  let weatherTipDate = null; // évite de rappeler l'API plusieurs fois pour le même jour
+
+  function weatherAdviceSentence(code, tempC, precipitationMm, windKmh){
+    // Codes météo WMO (norme utilisée par Open-Meteo) regroupés en grandes
+    // familles : on ne cherche pas la précision, juste un conseil utile.
+    const isThunder = code >= 95;
+    const isSnow = (code >= 71 && code <= 77) || code === 85 || code === 86;
+    const isRain = (code >= 51 && code <= 67) || (code >= 80 && code <= 82) || precipitationMm > 0;
+    const isFog = code === 45 || code === 48;
+    const isWindy = windKmh >= 40;
+    const isHot = tempC >= 30;
+    const isCold = tempC <= 12;
+
+    if (isThunder) return "Orages annoncés aujourd'hui : évite les déplacements inutiles et reste à l'abri.";
+    if (isSnow) return "Il neige aujourd'hui : couvre-toi bien et fais attention en te déplaçant.";
+    if (isRain) return "Il pleut aujourd'hui : prends une veste et un parapluie.";
+    if (isFog) return "Brouillard aujourd'hui : sois prudent sur la route.";
+    if (isWindy) return "Il y a du vent aujourd'hui : prends une veste.";
+    if (isHot) return "Il fait chaud aujourd'hui : pense à boire de l'eau et à te protéger du soleil.";
+    if (isCold) return "Il fait froid aujourd'hui : couvre-toi bien.";
+    return "Journée calme côté météo, rien de particulier à prévoir.";
+  }
+
+  async function fetchWeatherAdvice(cityValue){
+    const city = PRAYER_CITIES.find(c=>c.value===cityValue);
+    if (!city || !city.value) return null;
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${city.lat}&longitude=${city.lon}&current=temperature_2m,precipitation,weather_code,wind_speed_10m&timezone=${encodeURIComponent(city.value)}`;
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      const json = await res.json();
+      const cur = json?.current;
+      if (!cur) return null;
+      return weatherAdviceSentence(cur.weather_code, cur.temperature_2m, cur.precipitation, cur.wind_speed_10m);
+    } catch(e){ return null; }
+  }
+
+  // Récupère et affiche le conseil météo du jour dans Check-liste — au plus
+  // une fois par jour (rien à voir avec les tâches, donc rien n'est stocké
+  // en base : c'est recalculé côté client à chaque nouvelle journée).
+  async function renderWeatherTip(){
+    const box = document.getElementById("weather-tip");
+    if (!box) return;
+    if (!state.prayerCity){ box.textContent = ""; return; }
+    const today = todayISO();
+    if (weatherTipDate === today) return;
+    const advice = await fetchWeatherAdvice(state.prayerCity);
+    if (advice){ weatherTipDate = today; box.textContent = advice; }
+  }
+
   // Petit récapitulatif texte des horaires du jour, affiché dans Profil.
   function renderPrayerTimesToday(){
     const box = document.getElementById("prayer-times-today");
@@ -1887,6 +1943,7 @@ export function initJamsPlansApp() {
     const dateFmt = new Date(date+"T00:00:00").toLocaleDateString("fr-FR", { day:"numeric", month:"long" });
     document.getElementById("checkin-day-label").textContent =
       `Aujourd'hui, ${dayLabel} ${dateFmt}`;
+    renderWeatherTip();
 
     // Tâches déjà enregistrées dans Target (routines) pour ce jour uniquement —
     // jamais demain, jamais un autre jour — et seulement si la fenêtre de
@@ -2370,7 +2427,8 @@ export function initJamsPlansApp() {
     }
     msg.textContent = cityValue ? "Ville enregistrée, calcul des horaires du jour…" : "Horaires de prière désactivés.";
     msg.classList.add("success");
-    if (cityValue) await syncPrayerTimesForToday();
+    weatherTipDate = null; // la ville a changé : on redemande la météo
+    if (cityValue) { await syncPrayerTimesForToday(); renderWeatherTip(); }
     else renderPrayerTimesToday();
   });
 
