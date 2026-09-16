@@ -469,7 +469,7 @@ export function initJamsPlansApp() {
     if (todays.length === 0){ box.textContent = "Calcul des horaires du jour…"; return; }
     const order = PRAYER_NAMES;
     const sorted = [...todays].sort((a,b)=>order.indexOf(a.label.slice(PRAYER_LABEL_PREFIX.length)) - order.indexOf(b.label.slice(PRAYER_LABEL_PREFIX.length)));
-    box.textContent = "Aujourd'hui : " + sorted.map(t=>`${t.label.slice(PRAYER_LABEL_PREFIX.length)} ${t.planning_start}`).join(" · ");
+    box.textContent = "Aujourd'hui : " + sorted.map(t=>`${t.label.slice(PRAYER_LABEL_PREFIX.length)} : ${t.planning_start}`).join(" · ");
   }
 
   // =========================================================
@@ -975,12 +975,14 @@ export function initJamsPlansApp() {
         const isPrayer = (t.label||"").startsWith(PRAYER_LABEL_PREFIX);
         const rangeText = t.end_date && t.end_date !== t.start_date ? ` → ${formatDateFr(t.end_date)}` : "";
         const slotText = t.planning_start && t.planning_end ? ` · ${t.planning_start}–${t.planning_end}` : "";
-        const metaText = isPrayer ? `${t.planning_start}${rangeText}` : `${t.planned_hours}h${rangeText}${slotText}`;
+        // Pour une prière, l'heure est mise juste devant le nom : "🕌 Fajr : 06:30".
+        const displayLabel = (isPrayer && t.planning_start) ? `${t.label} : ${t.planning_start}` : t.label;
+        const metaText = isPrayer ? rangeText : `${t.planned_hours}h${rangeText}${slotText}`;
         return `
           <div class="agenda-item">
             <div>
               <span class="cat-badge" style="background:${categoryColor(cat)};">${escapeHtml(cat)}</span>${t.is_priority ? '<span class="priority-badge">Prioritaire</span>' : ""}
-              <div style="margin-top:4px;">${escapeHtml(t.label)}</div>
+              <div style="margin-top:4px;">${escapeHtml(displayLabel)}</div>
               <div class="agenda-meta">${metaText}</div>
             </div>
             <button class="del-btn" data-agenda-id="${t.id}" title="Supprimer">Suppr.</button>
@@ -1988,7 +1990,7 @@ export function initJamsPlansApp() {
     const todaysAgendaTasks = state.agendaTasks.filter(t=> date >= t.start_date && date <= t.end_date).map(t=>({
       key: "agenda-"+t.id, label: t.label, planned_hours: t.planned_hours,
       objective_id: t.objective_id || null, routine_id: null, agenda_task_id: t.id,
-      is_priority: t.is_priority,
+      is_priority: t.is_priority, planning_start: t.planning_start || null,
     }));
 
     const items = [...todaysRoutines, ...todaysAgendaTasks];
@@ -2008,12 +2010,14 @@ export function initJamsPlansApp() {
       ));
       const cat = item.objective_id ? categoryOfObjective(item.objective_id) : "Agenda";
       const isPrayer = (item.label||"").startsWith(PRAYER_LABEL_PREFIX);
+      // Pour une prière, on affiche l'heure juste devant le nom : "🕌 Fajr : 06:30".
+      const displayLabel = (isPrayer && item.planning_start) ? `${item.label} : ${item.planning_start}` : item.label;
       const card = document.createElement("div");
       card.className = "card";
       card.style.marginBottom = "12px";
       card.innerHTML = `
         <div style="display:flex; justify-content:space-between; align-items:center;">
-          <strong style="font-size:14px;">${escapeHtml(item.label)}<span class="cat-badge" style="background:${categoryColor(cat)};">${escapeHtml(cat)}</span>${item.is_priority ? '<span class="priority-badge">Prioritaire</span>' : ""}</strong>
+          <strong style="font-size:14px;">${escapeHtml(displayLabel)}<span class="cat-badge" style="background:${categoryColor(cat)};">${escapeHtml(cat)}</span>${item.is_priority ? '<span class="priority-badge">Prioritaire</span>' : ""}</strong>
           ${isPrayer ? "" : `<span class="mono muted" style="font-size:12px;">${item.planned_hours}h prévues</span>`}
         </div>
         <div class="status-row">
