@@ -273,6 +273,21 @@ export function initJamsPlansApp() {
     return d.toISOString().slice(0,10);
   }
 
+  // Combine un champ "heures" + un champ "minutes" en un total décimal
+  // d'heures (ex : 1h30 -> 1.5), et inversement pour ré-afficher une valeur
+  // décimale existante dans les deux champs séparés.
+  function hmToHours(hoursVal, minutesVal){
+    const h = parseFloat(hoursVal) || 0;
+    const m = parseFloat(minutesVal) || 0;
+    return h + m / 60;
+  }
+  function hoursToHM(totalHours){
+    const total = totalHours || 0;
+    const h = Math.floor(total);
+    const m = Math.round((total - h) * 60);
+    return m >= 60 ? { h: h + 1, m: 0 } : { h, m };
+  }
+
   // =========================================================
   // DONNÉES DE DÉMO (mode local uniquement) — toutes calées en relatif
   // par rapport à "aujourd'hui" pour rester cohérentes quel que soit le
@@ -510,13 +525,23 @@ export function initJamsPlansApp() {
     document.getElementById("obj-title").value = "";
     document.getElementById("obj-start-date").value = "";
     document.getElementById("obj-date").value = "";
+    document.getElementById("obj-no-end-date").checked = false;
+    document.getElementById("obj-date-wrap").style.display = "";
     document.getElementById("obj-hours").value = "10";
+    document.getElementById("obj-minutes").value = "0";
     document.getElementById("obj-category-custom").value = "";
     document.getElementById("obj-category-custom").style.display = "none";
     document.getElementById("obj-category").value = "Étude";
     document.getElementById("obj-submit-btn").textContent = "+ Ajouter";
     document.getElementById("obj-cancel-edit-btn").style.display = "none";
   }
+
+  // "Tous les jours" : masque la date de fin (l'objectif devient permanent,
+  // sans échéance, jusqu'à ce qu'on clique sur "Arrêter" dans la liste).
+  document.getElementById("obj-no-end-date").addEventListener("change", e=>{
+    document.getElementById("obj-date-wrap").style.display = e.target.checked ? "none" : "";
+    if (e.target.checked) document.getElementById("obj-date").value = "";
+  });
 
   function startEditingObjective(obj){
     editingObjectiveId = obj.id;
@@ -527,7 +552,11 @@ export function initJamsPlansApp() {
     document.getElementById("obj-category-custom").value = isStandard ? "" : (obj.category || "");
     document.getElementById("obj-start-date").value = obj.start_date || "";
     document.getElementById("obj-date").value = obj.target_date || "";
-    document.getElementById("obj-hours").value = obj.weekly_hours_target;
+    document.getElementById("obj-no-end-date").checked = !obj.target_date;
+    document.getElementById("obj-date-wrap").style.display = obj.target_date ? "" : "none";
+    const objHM = hoursToHM(obj.weekly_hours_target);
+    document.getElementById("obj-hours").value = objHM.h;
+    document.getElementById("obj-minutes").value = objHM.m;
     document.getElementById("obj-submit-btn").textContent = "Enregistrer les modifications";
     document.getElementById("obj-cancel-edit-btn").style.display = "inline-block";
     document.querySelectorAll(".target-switch-btn").forEach(b=>b.classList.remove("active"));
@@ -548,8 +577,9 @@ export function initJamsPlansApp() {
       ? (document.getElementById("obj-category-custom").value.trim() || "Autre")
       : categorySelect;
     const startDate = document.getElementById("obj-start-date").value;
-    const date = document.getElementById("obj-date").value;
-    const hours = parseFloat(document.getElementById("obj-hours").value) || 0;
+    const noEndDate = document.getElementById("obj-no-end-date").checked;
+    const date = noEndDate ? "" : document.getElementById("obj-date").value;
+    const hours = hmToHours(document.getElementById("obj-hours").value, document.getElementById("obj-minutes").value);
     const year = date ? new Date(date+"T00:00:00").getFullYear() : new Date().getFullYear();
 
     if (editingObjectiveId){
@@ -629,6 +659,26 @@ export function initJamsPlansApp() {
     renderAll();
   }
 
+  // Arrête un objectif "Tous les jours" (permanent, sans date de fin) : fixe
+  // la date de fin à aujourd'hui et le marque atteint, pour qu'il rejoigne
+  // l'archive en Réussite sans rien perdre de l'historique (routines,
+  // check-ins, heures) déjà enregistré jusqu'à ce jour.
+  async function stopOngoingObjective(id){
+    const obj = state.objectives.find(o=>o.id===id);
+    if (!obj) return;
+    const today = todayISO();
+    if (SUPABASE_CONFIGURED){
+      try {
+        const updated = await db.updateObjective(id, { target_date: today, achieved: true });
+        Object.assign(obj, updated);
+      } catch(err){ showToast("Erreur : " + err.message, "error"); return; }
+    } else {
+      obj.target_date = today;
+      obj.achieved = true;
+    }
+    renderAll();
+  }
+
   // =========================================================
   // AGENDA : tâches ponctuelles à une date précise
   // =========================================================
@@ -647,7 +697,7 @@ export function initJamsPlansApp() {
       return;
     }
     const objectiveId = document.getElementById("agenda-objective").value || null;
-    const hours = parseFloat(document.getElementById("agenda-hours").value) || 0;
+    const hours = hmToHours(document.getElementById("agenda-hours").value, document.getElementById("agenda-minutes").value);
     const isPriority = document.getElementById("agenda-priority").checked;
     const addToPlanning = document.getElementById("agenda-add-to-planning").checked;
 
@@ -694,6 +744,7 @@ export function initJamsPlansApp() {
     // Réinitialisation du formulaire
     document.getElementById("agenda-label").value = "";
     document.getElementById("agenda-hours").value = "1";
+    document.getElementById("agenda-minutes").value = "0";
     document.getElementById("agenda-priority").checked = false;
     document.getElementById("agenda-add-to-planning").checked = false;
     document.getElementById("agenda-planning-slot").style.display = "none";
@@ -792,28 +843,34 @@ export function initJamsPlansApp() {
           ? `<div class="objective-history">Reporté : ${obj.history.map(h=>`${h.fromYear} → ${h.toYear}`).join(" · ")}</div>`
           : "";
 
-        const dateRangeText = formatDateRangeFr(obj.start_date, obj.target_date);
+        const isOngoing = !obj.target_date && !obj.achieved;
+        const dateRangeText = isOngoing ? "Tous les jours" : formatDateRangeFr(obj.start_date, obj.target_date);
 
         const progressHtml = objectiveProgressHtml(obj);
 
         li.innerHTML = `
           <div style="display:flex; align-items:flex-start; justify-content:space-between; width:100%;">
             <div style="flex:1;">
-              <div class="obj-title">${escapeHtml(obj.title)}<span class="cat-badge" style="background:${categoryColor(obj.category || "Autre")};">${escapeHtml(obj.category || "Autre")}</span>${obj.achieved ? '<span class="achieved-badge">atteint</span>' : ""}</div>
+              <div class="obj-title">${escapeHtml(obj.title)}<span class="cat-badge" style="background:${categoryColor(obj.category || "Autre")};">${escapeHtml(obj.category || "Autre")}</span>${isOngoing ? '<span class="cat-badge" style="background:var(--violet-soft); color:var(--violet);">tous les jours</span>' : ""}${obj.achieved ? '<span class="achieved-badge">atteint</span>' : ""}</div>
               <div class="obj-meta">${obj.weekly_hours_target}h / semaine${dateRangeText ? " · "+dateRangeText : ""}</div>
               ${progressHtml}
               ${historyHtml}
             </div>
             <button class="del-btn" title="Supprimer">Suppr.</button>
           </div>
-          <div style="display:flex; gap:12px; align-items:center;">
+          <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
             <button class="achieve-toggle">${obj.achieved ? "Marquer non atteint" : "Marquer atteint"}</button>
             <button class="continue-btn edit-obj-btn">Modifier</button>
-            ${!obj.achieved ? '<button class="continue-btn continue-year-btn">Poursuivre en N+1</button>' : ""}
+            ${isOngoing ? '<button class="continue-btn stop-objective-btn">Arrêter</button>' : ""}
+            ${!obj.achieved && !isOngoing ? '<button class="continue-btn continue-year-btn">Poursuivre en N+1</button>' : ""}
           </div>
         `;
         li.querySelector(".del-btn").addEventListener("click", ()=>deleteObjective(obj.id));
         li.querySelector(".edit-obj-btn").addEventListener("click", ()=>startEditingObjective(obj));
+        const stopBtn = li.querySelector(".stop-objective-btn");
+        if (stopBtn){
+          stopBtn.addEventListener("click", ()=>stopOngoingObjective(obj.id));
+        }
         li.querySelector(".achieve-toggle").addEventListener("click", async ()=>{
           const nextAchieved = !obj.achieved;
           if (SUPABASE_CONFIGURED){
@@ -917,8 +974,12 @@ export function initJamsPlansApp() {
     const yearSpan = yearEnd - yearStart;
 
     const objectives = state.objectives.filter(o=>{
-      if (!o.start_date || !o.target_date) return false;
+      if (!o.start_date) return false;
       const s = new Date(o.start_date+"T00:00:00").getTime();
+      // Un objectif "Tous les jours" (sans date de fin) reste visible tant
+      // qu'il a commencé avant la fin de l'année affichée — il n'a pas
+      // d'échéance à comparer.
+      if (!o.target_date) return s < yearEnd;
       const e = new Date(o.target_date+"T00:00:00").getTime();
       return e >= yearStart && s < yearEnd;
     });
@@ -936,20 +997,24 @@ export function initJamsPlansApp() {
     const GANTT_VIVID_PALETTE = ["#FF7A18", "#22C55E", "#FFC400", "#FF3D9A"];
 
     const rowsHtml = objectives.map((obj, i)=>{
+      const isOngoing = !obj.target_date;
       const s = Math.max(new Date(obj.start_date+"T00:00:00").getTime(), yearStart);
-      const e = Math.min(new Date(obj.target_date+"T00:00:00").getTime(), yearEnd);
+      const e = isOngoing ? yearEnd : Math.min(new Date(obj.target_date+"T00:00:00").getTime(), yearEnd);
       const leftPct = ((s - yearStart) / yearSpan) * 100;
       const widthPct = Math.max(((e - s) / yearSpan) * 100, 1);
+      // Un objectif permanent n'a pas de "temps écoulé" à mesurer (pas
+      // d'échéance) : on affiche plutôt son % de discipline (jours réussis).
       const time = objectiveTimeProgress(obj);
-      const pct = time ? time.pct : 0;
+      const pct = isOngoing ? objectiveDisciplinePct(obj) : (time ? time.pct : 0);
+      const pctLabel = isOngoing ? `${pct}% ∞` : `${pct}%`;
       const barColor = GANTT_VIVID_PALETTE[i % GANTT_VIVID_PALETTE.length];
       return `
         <div class="gantt-row">
           <div class="gantt-row-label">${escapeHtml(obj.title)}<span class="cat-badge" style="background:${categoryColor(obj.category || "Autre")};">${escapeHtml(obj.category || "Autre")}</span></div>
           <div class="gantt-track">
-            <div class="gantt-bar" style="left:${leftPct}%; width:${widthPct}%; background:${barColor}80; box-shadow:0 0 0 1px ${barColor}, 0 0 8px ${barColor}99;">
+            <div class="gantt-bar" style="left:${leftPct}%; width:${widthPct}%; background:${barColor}80; box-shadow:0 0 0 1px ${barColor}, 0 0 8px ${barColor}99;" title="${isOngoing ? "Tous les jours : sans date de fin" : ""}">
               <div class="gantt-bar-fill" style="width:${pct}%; background:${barColor};"></div>
-              <span class="gantt-bar-pct" style="color:#fff; font-weight:700; text-shadow:0 1px 3px rgba(0,0,0,.85);">${pct}%</span>
+              <span class="gantt-bar-pct" style="color:#fff; font-weight:700; text-shadow:0 1px 3px rgba(0,0,0,.85);">${pctLabel}</span>
             </div>
           </div>
         </div>
@@ -1071,9 +1136,10 @@ export function initJamsPlansApp() {
     const form = document.createElement("form");
     form.className = "card obj-form";
     form.innerHTML = `
-      <div>
-        <label class="field-label" for="routine-day">Jour</label>
-        <select id="routine-day"></select>
+      <div style="min-width:220px;">
+        <label class="field-label">Jours</label>
+        <div id="routine-days" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
+        <button type="button" id="routine-days-all" class="del-btn" style="margin-top:4px; text-decoration:underline;">Toute la semaine</button>
       </div>
       <div style="flex:1; min-width:140px;">
         <label class="field-label" for="routine-label">Tâche</label>
@@ -1081,7 +1147,10 @@ export function initJamsPlansApp() {
       </div>
       <div>
         <label class="field-label" for="routine-hours">Durée</label>
-        <div class="hours-input"><input id="routine-hours" type="number" min="0" step="0.5" value="2" /><span class="muted" style="font-size:12px;">h</span></div>
+        <div class="hours-input">
+          <input id="routine-hours" type="number" min="0" step="1" value="2" /><span class="muted" style="font-size:12px;">h</span>
+          <input id="routine-minutes" type="number" min="0" max="59" step="5" value="0" /><span class="muted" style="font-size:12px;">min</span>
+        </div>
       </div>
       <div>
         <label class="field-label" for="routine-start-time">Début</label>
@@ -1096,30 +1165,47 @@ export function initJamsPlansApp() {
       </label>
       <button type="submit" class="btn" style="align-self:flex-end;">+ Ajouter</button>
     `;
-    const daySelect = form.querySelector("#routine-day");
+    const daysWrap = form.querySelector("#routine-days");
     DAYS.forEach(d=>{
-      const opt = document.createElement("option");
-      opt.value = d.value; opt.textContent = d.label;
-      daySelect.appendChild(opt);
+      const dayLabel = document.createElement("label");
+      dayLabel.style.cssText = "display:flex; flex-direction:row; align-items:center; gap:4px; font-size:12px; color:var(--muted); white-space:nowrap;";
+      dayLabel.innerHTML = `<input type="checkbox" class="routine-day-checkbox" value="${d.value}" style="width:auto;" /> ${d.short}`;
+      daysWrap.appendChild(dayLabel);
+    });
+    form.querySelector("#routine-days-all").addEventListener("click", ()=>{
+      const boxes = form.querySelectorAll(".routine-day-checkbox");
+      const allChecked = Array.from(boxes).every(b=>b.checked);
+      boxes.forEach(b=>{ b.checked = !allChecked; });
     });
     form.addEventListener("submit", async e=>{
       e.preventDefault();
       const label = form.querySelector("#routine-label").value.trim();
       if (!label) return;
-      const draft = {
+      const selectedDays = Array.from(form.querySelectorAll(".routine-day-checkbox:checked")).map(b=>parseInt(b.value));
+      if (selectedDays.length === 0){
+        showToast("Cochez au moins un jour de la semaine.", "error");
+        return;
+      }
+      const plannedHours = hmToHours(form.querySelector("#routine-hours").value, form.querySelector("#routine-minutes").value);
+      const baseDraft = {
         objective_id: objId,
-        day_of_week: parseInt(daySelect.value),
         label,
-        planned_hours: parseFloat(form.querySelector("#routine-hours").value) || 0,
+        planned_hours: plannedHours,
         is_priority: form.querySelector("#routine-priority").checked,
         start_time: form.querySelector("#routine-start-time").value || null,
         end_time: form.querySelector("#routine-end-time").value || null,
       };
-      if (SUPABASE_CONFIGURED){
-        try { state.routines.push(await db.insertRoutine(state.userId, draft)); }
-        catch(err){ showToast("Erreur lors de l'ajout du créneau : " + err.message, "error"); return; }
-      } else {
-        state.routines.push({ id: nextId(), ...draft });
+      // Un enregistrement crée une routine par jour coché — pratique pour
+      // poser en une fois une tâche récurrente sur plusieurs jours (ou "Toute
+      // la semaine" pour un objectif "tous les jours").
+      for (const dayValue of selectedDays){
+        const draft = { ...baseDraft, day_of_week: dayValue };
+        if (SUPABASE_CONFIGURED){
+          try { state.routines.push(await db.insertRoutine(state.userId, draft)); }
+          catch(err){ showToast("Erreur lors de l'ajout du créneau : " + err.message, "error"); return; }
+        } else {
+          state.routines.push({ id: nextId(), ...draft });
+        }
       }
       renderAll();
     });

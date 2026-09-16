@@ -3,6 +3,12 @@
 html,
 body {
   background-color: #0f1b33;
+  /* Empeche le pincer-zoomer et le double-tap-zoom involontaires pendant la
+     manipulation (boutons, cases a cocher, listes) sur mobile. */
+  touch-action: manipulation;
+  overscroll-behavior-y: contain;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 * {
