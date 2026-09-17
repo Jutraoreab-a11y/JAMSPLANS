@@ -1079,6 +1079,7 @@ export function initJamsPlansApp() {
 
     const list = document.getElementById("objective-list");
     list.innerHTML = "";
+    const today = todayISO();
     const visibleObjectives = state.objectives.filter(objectiveMatchesSelectedYear);
     if (visibleObjectives.length === 0){
       list.innerHTML = `<li class="empty-state" style="border:1px dashed var(--line); background:none;">${emptyStateIcon()}Aucun objectif pour ${state.selectedAppYear === "all" ? "l'instant" : "l'année " + state.selectedAppYear}. Ajoutez-en un ci-dessus.</li>`;
@@ -1095,13 +1096,18 @@ export function initJamsPlansApp() {
 
         const isOngoing = !obj.target_date && !obj.achieved;
         const dateRangeText = isOngoing ? "Tous les jours" : formatDateRangeFr(obj.start_date, obj.target_date);
+        // Tant que l'échéance n'est pas dépassée (ou qu'il n'y en a pas), un
+        // objectif non atteint n'est ni un succès ni un échec pour le ratio
+        // de l'Archive (voir renderArchive) — ce badge le rend explicite ici
+        // aussi, dans la liste des objectifs en cours.
+        const isStillOpen = !obj.achieved && (!obj.target_date || obj.target_date >= today);
 
         const progressHtml = objectiveProgressHtml(obj);
 
         li.innerHTML = `
           <div style="display:flex; align-items:flex-start; justify-content:space-between; width:100%;">
             <div style="flex:1;">
-              <div class="obj-title">${escapeHtml(obj.title)}<span class="cat-badge" style="background:${categoryColor(obj.category || "Autre")};">${escapeHtml(obj.category || "Autre")}</span>${isOngoing ? '<span class="cat-badge" style="background:var(--violet-soft); color:var(--violet);">tous les jours</span>' : ""}${obj.achieved ? '<span class="achieved-badge">atteint</span>' : ""}</div>
+              <div class="obj-title">${escapeHtml(obj.title)}<span class="cat-badge" style="background:${categoryColor(obj.category || "Autre")};">${escapeHtml(obj.category || "Autre")}</span>${isOngoing ? '<span class="cat-badge" style="background:var(--violet-soft); color:var(--violet);">tous les jours</span>' : ""}${obj.achieved ? '<span class="achieved-badge">atteint</span>' : (isStillOpen ? '<span class="pending-badge">pas encore réussi</span>' : "")}</div>
               <div class="obj-meta">${obj.weekly_hours_target}h / semaine${dateRangeText ? " · "+dateRangeText : ""}</div>
               ${progressHtml}
               ${historyHtml}
