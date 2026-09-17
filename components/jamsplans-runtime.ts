@@ -618,7 +618,12 @@ export function initJamsPlansApp() {
         ],
       },
     ],
-    activeDayTemplateId: "tpl-default",
+    // "Par défaut" (période sans dates) n'est plus sélectionnable depuis
+    // l'interface : seules les périodes datées ("+ Nouvelle période")
+    // apparaissent désormais. On démarre donc sur une période datée en mode
+    // démo ; en mode Supabase, la vraie sélection est recalculée après le
+    // chargement du profil (cf. enterApp()).
+    activeDayTemplateId: SUPABASE_CONFIGURED ? null : "tpl-hiver",
   };
 
   // =========================================================
@@ -1505,7 +1510,8 @@ export function initJamsPlansApp() {
   // donc jamais concernées par cette règle.
   function findOverlappingBlock(start, end, excludeId, blocks){
     const newRanges = blockRanges(start, end);
-    for (const block of (blocks || getActiveTemplate().blocks)){
+    const activeTpl = getActiveTemplate();
+    for (const block of (blocks || (activeTpl ? activeTpl.blocks : []))){
       if (block.id === excludeId) continue;
       const existingRanges = blockRanges(block.start, block.end);
       for (const r1 of newRanges){
@@ -1521,19 +1527,20 @@ export function initJamsPlansApp() {
   // légende) — null quand le formulaire sert à ajouter un nouveau bloc.
   let editingDayTemplateBlockId = null;
 
+  // Le bouton "Par défaut" (période sans dates) a été retiré de
+  // l'interface : plus aucune sélection automatique de repli. Si aucune
+  // période datée ne correspond, il n'y a simplement pas de journée type
+  // active (l'utilisateur est invité à en créer une).
   function getActiveTemplate(){
-    return state.dayTemplates.find(t=>t.id===state.activeDayTemplateId) || state.dayTemplates[0];
+    return state.dayTemplates.find(t=>t.id===state.activeDayTemplateId) || null;
   }
 
-  // Retrouve la journée type applicable à une date donnée : celle dont la
-  // période (début->fin) couvre cette date, sinon celle "toujours active"
-  // (sans période définie), sinon la première disponible.
+  // Retrouve la journée type applicable à une date donnée : uniquement
+  // celle dont la période (début->fin) couvre cette date, sinon aucune.
   function getTemplateForDate(dateStr){
-    const specific = state.dayTemplates.find(t=>
+    return state.dayTemplates.find(t=>
       t.period_start && t.period_end && dateStr >= t.period_start && dateStr <= t.period_end
-    );
-    if (specific) return specific;
-    return state.dayTemplates.find(t=>!t.period_start && !t.period_end) || state.dayTemplates[0];
+    ) || null;
   }
 
   // Anneau 24h : chaque bloc devient un segment coloré positionné par angle.
@@ -1573,7 +1580,8 @@ export function initJamsPlansApp() {
     const wrap = document.getElementById("day-template-ring");
     const size = 260, cx = 130, cy = 130, r = 88, sw = 20;
     const C = 2 * Math.PI * r;
-    const blocks = getActiveTemplate().blocks;
+    const activeTpl = getActiveTemplate();
+    const blocks = activeTpl ? activeTpl.blocks : [];
     const prayerBlocks = getTodaysPrayerPseudoBlocks();
 
     const segments = blocksToRingSegments(blocks);
@@ -1643,7 +1651,8 @@ export function initJamsPlansApp() {
   function renderDayTemplateProgress(){
     const wrap = document.getElementById("day-template-progress");
     if (!wrap) return;
-    const blocks = getActiveTemplate().blocks;
+    const activeTpl = getActiveTemplate();
+    const blocks = activeTpl ? activeTpl.blocks : [];
     const totalMin = blocks.reduce((sum,b)=>{
       const s = timeToMinutes(b.start), e = timeToMinutes(b.end);
       return sum + (e > s ? (e - s) : (1440 - s + e));
@@ -1660,10 +1669,13 @@ export function initJamsPlansApp() {
   // est prévu à chaque instant sans avoir à survoler l'anneau.
   function renderDayTemplateLegend(){
     const legend = document.getElementById("day-template-legend");
-    const blocks = [...getActiveTemplate().blocks].sort((a,b)=>timeToMinutes(a.start)-timeToMinutes(b.start));
+    const activeTpl = getActiveTemplate();
     const prayerBlocks = [...getTodaysPrayerPseudoBlocks()].sort((a,b)=>timeToMinutes(a.start)-timeToMinutes(b.start));
+    const blocks = activeTpl ? [...activeTpl.blocks].sort((a,b)=>timeToMinutes(a.start)-timeToMinutes(b.start)) : [];
     if (blocks.length === 0 && prayerBlocks.length === 0){
-      legend.innerHTML = '<p class="muted" style="font-size:13px;">Aucune plage définie pour cette période.</p>';
+      legend.innerHTML = activeTpl
+        ? '<p class="muted" style="font-size:13px;">Aucune plage définie pour cette période.</p>'
+        : '<p class="muted" style="font-size:13px;">Aucune période sélectionnée. Créez-en une avec « + Nouvelle période ».</p>';
       return;
     }
     const blocksHtml = blocks.map(b=>`
@@ -1691,7 +1703,8 @@ export function initJamsPlansApp() {
     legend.querySelectorAll(".dt-edit-btn").forEach(btn=>{
       btn.addEventListener("click", ()=>{
         const id = btn.closest("[data-block-id]").dataset.blockId;
-        const block = getActiveTemplate().blocks.find(b=>b.id===id);
+        const activeTpl = getActiveTemplate();
+        const block = activeTpl && activeTpl.blocks.find(b=>b.id===id);
         if (!block) return;
         editingDayTemplateBlockId = id;
         document.getElementById("dt-start").value = block.start;
@@ -1723,11 +1736,16 @@ export function initJamsPlansApp() {
   document.getElementById("dt-cancel-edit-btn").addEventListener("click", cancelDayTemplateEdit);
 
   // Pills de sélection de période + formulaire de création d'une nouvelle
-  // journée type bornée à une plage de dates.
+  // journée type bornée à une plage de dates. Le bouton "Par défaut" (sans
+  // dates) a été retiré : seules les périodes datées sont listées ici — une
+  // ancienne période "Par défaut" éventuellement présente dans les données
+  // reste intacte en base mais n'apparaît plus (et n'est plus sélectionnable
+  // depuis cette liste).
   function renderDayTemplatePeriods(){
     const wrap = document.getElementById("day-template-periods");
-    wrap.innerHTML = state.dayTemplates.map(t=>{
-      const rangeText = t.period_start && t.period_end ? formatDateRangeFr(t.period_start, t.period_end) : "toujours";
+    const datedTemplates = state.dayTemplates.filter(t=>t.period_start && t.period_end);
+    wrap.innerHTML = datedTemplates.map(t=>{
+      const rangeText = formatDateRangeFr(t.period_start, t.period_end);
       const active = t.id === state.activeDayTemplateId ? " active" : "";
       return `<button type="button" class="pill${active}" data-tpl-id="${t.id}">${escapeHtml(t.name)} <span class="muted" style="font-size:10.5px;">(${rangeText})</span></button>`;
     }).join("") + `<button type="button" id="new-period-btn" class="pill">+ Nouvelle période</button>`;
@@ -1738,9 +1756,17 @@ export function initJamsPlansApp() {
         renderDayTemplate();
       });
     });
-    document.getElementById("new-period-btn").addEventListener("click", ()=>{
+    // Retour visuel manquant auparavant : le bouton "+ Nouvelle période"
+    // reste maintenant coloré (actif) tant que son formulaire est ouvert.
+    const newPeriodBtn = document.getElementById("new-period-btn");
+    const formOpen = document.getElementById("new-period-form").style.display !== "none"
+      && document.getElementById("new-period-form").style.display !== "";
+    newPeriodBtn.classList.toggle("active", formOpen);
+    newPeriodBtn.addEventListener("click", ()=>{
       const panel = document.getElementById("new-period-form");
-      panel.style.display = panel.style.display === "none" ? "flex" : "none";
+      const isOpen = panel.style.display !== "none" && panel.style.display !== "";
+      panel.style.display = isOpen ? "none" : "flex";
+      newPeriodBtn.classList.toggle("active", !isOpen);
     });
   }
 
@@ -1759,7 +1785,9 @@ export function initJamsPlansApp() {
   }
 
   async function deleteDayTemplateBlock(id){
-    getActiveTemplate().blocks = getActiveTemplate().blocks.filter(b=>b.id!==id);
+    const activeTpl = getActiveTemplate();
+    if (!activeTpl) return;
+    activeTpl.blocks = activeTpl.blocks.filter(b=>b.id!==id);
     await saveDayTemplates();
     renderDayTemplate();
   }
@@ -1803,6 +1831,10 @@ export function initJamsPlansApp() {
     const name = document.getElementById("np-name").value.trim() || "Nouvelle période";
     const start = document.getElementById("np-start").value || null;
     const end = document.getElementById("np-end").value || null;
+    if (!start || !end){
+      showToast("Renseignez une date de début et de fin pour la période.", "error");
+      return;
+    }
     const tpl = { id: nextId(), name, period_start: start, period_end: end, blocks: [] };
     state.dayTemplates.push(tpl);
     state.activeDayTemplateId = tpl.id;
@@ -1816,6 +1848,11 @@ export function initJamsPlansApp() {
 
   document.getElementById("day-template-form").addEventListener("submit", async e=>{
     e.preventDefault();
+    const activeTpl = getActiveTemplate();
+    if (!activeTpl){
+      showToast("Sélectionnez ou créez d'abord une période avec « + Nouvelle période ».", "error");
+      return;
+    }
     const start = document.getElementById("dt-start").value;
     const end = document.getElementById("dt-end").value;
     const label = document.getElementById("dt-label").value.trim();
@@ -1825,11 +1862,11 @@ export function initJamsPlansApp() {
     // pendant un trajet) : pas de vérification de chevauchement ici.
 
     if (editingDayTemplateBlockId){
-      const block = getActiveTemplate().blocks.find(b=>b.id===editingDayTemplateBlockId);
+      const block = activeTpl.blocks.find(b=>b.id===editingDayTemplateBlockId);
       if (block){ block.start = start; block.end = end; block.label = label; }
       cancelDayTemplateEdit();
     } else {
-      getActiveTemplate().blocks.push({ id: nextId(), start, end, label });
+      activeTpl.blocks.push({ id: nextId(), start, end, label });
       // Auto-chaînage : la fin du bloc qu'on vient d'ajouter devient le début
       // proposé pour le prochain, pour ne pas ressaisir l'heure à chaque fois.
       document.getElementById("dt-start").value = end;
@@ -1861,9 +1898,13 @@ export function initJamsPlansApp() {
 
     // Blocs de la journée type applicable à cette date (aucun check-in
     // associé : ce sont des repères de structure, pas des tâches cochées).
-    template.blocks.forEach(b=>{
-      items.push({ start: b.start, end: b.end, label: b.label, kind: "template", status: null });
-    });
+    // Aucune période datée ne couvre forcément cette date (le bouton "Par
+    // défaut" a été retiré) : dans ce cas, simplement pas de bloc structure.
+    if (template){
+      template.blocks.forEach(b=>{
+        items.push({ start: b.start, end: b.end, label: b.label, kind: "template", status: null });
+      });
+    }
 
     // Routines avec horaire, dont le jour de semaine correspond et dont
     // l'objectif est actif à cette date.
@@ -1915,7 +1956,7 @@ export function initJamsPlansApp() {
     const ringHtml = renderDayConsultRing(items, dateStr);
 
     result.innerHTML = `
-      <p class="label">Journée type appliquée : ${escapeHtml(template.name)}</p>
+      <p class="label">${template ? `Journée type appliquée : ${escapeHtml(template.name)}` : "Aucune journée type ne couvre cette date."}</p>
       ${ringHtml}
       ${rowsHtml || '<p class="muted" style="font-size:13px;">Rien de programmé à horaire fixe ce jour-là.</p>'}
       ${untimedHtml}
@@ -3099,11 +3140,15 @@ export function initJamsPlansApp() {
         state.prayerCity = loaded.profile.prayer_city || "";
         state.prayerEnabled = !!loaded.profile.prayer_enabled;
         state.weeklyLimits = loaded.profile.weekly_limits || {};
+        // Le bouton "Par défaut" a été retiré de l'interface : on ne crée
+        // plus de période de repli sans dates. Une éventuelle ancienne
+        // période "Par défaut" déjà enregistrée reste dans les données (pas
+        // de perte), mais n'est plus jamais sélectionnée automatiquement.
         const loadedTemplates = loaded.profile.day_template;
-        state.dayTemplates = (Array.isArray(loadedTemplates) && loadedTemplates.length > 0 && loadedTemplates[0].blocks)
-          ? loadedTemplates
-          : [{ id: "tpl-default", name: "Par défaut", period_start: null, period_end: null, blocks: [] }];
-        state.activeDayTemplateId = state.dayTemplates[0].id;
+        state.dayTemplates = Array.isArray(loadedTemplates) ? loadedTemplates : [];
+        const todaysTpl = getTemplateForDate(todayISO());
+        const datedTemplates = state.dayTemplates.filter(t=>t.period_start && t.period_end);
+        state.activeDayTemplateId = todaysTpl ? todaysTpl.id : (datedTemplates[0] ? datedTemplates[0].id : null);
       }
       state.selectedPlanningObjective = state.objectives[0]?.id || null;
     } catch(err){
