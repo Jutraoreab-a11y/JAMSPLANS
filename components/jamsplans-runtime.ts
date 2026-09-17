@@ -488,7 +488,9 @@ export function initJamsPlansApp() {
     if (isWindy) return "Il y a du vent aujourd'hui : prends une veste.";
     if (isHot) return "Il fait chaud aujourd'hui : pense à boire de l'eau et à te protéger du soleil.";
     if (isCold) return "Il fait froid aujourd'hui : couvre-toi bien.";
-    return "Journée calme côté météo, rien de particulier à prévoir.";
+    // Rien de notable : pas de conseil affiché du tout plutôt qu'une phrase
+    // de remplissage (voir renderWeatherTip).
+    return "";
   }
 
   async function fetchWeatherAdvice(cityValue){
@@ -521,7 +523,11 @@ export function initJamsPlansApp() {
     const advice = await fetchWeatherAdvice(state.prayerCity);
     if (advice){
       weatherTipDate = today;
-      box.innerHTML = `<span style="font-size:18px; vertical-align:middle;">${advice.icon}</span> <strong class="mono">${advice.tempC}°C</strong> ${escapeHtml(advice.sentence)}`;
+      // Pas de phrase (journée calme) -> rien à afficher du tout, plutôt
+      // qu'un message de remplissage sans intérêt.
+      box.innerHTML = advice.sentence
+        ? `<span style="font-size:18px; vertical-align:middle;">${advice.icon}</span> <strong class="mono">${advice.tempC}°C</strong> ${escapeHtml(advice.sentence)}`
+        : "";
     }
   }
 
@@ -949,6 +955,121 @@ export function initJamsPlansApp() {
     renderAll();
   }
 
+  // Quand un objectif est réussi, arrêté ou en échec (échéance dépassée),
+  // on demande si on veut le poursuivre à une nouvelle étape/niveau ou sur
+  // une nouvelle période. Si oui, un formulaire permet de changer le titre,
+  // le niveau (volume cible) et la plage de dates : un nouvel objectif est
+  // créé avec ces réglages, l'ancien restant tel quel dans l'archive.
+  function openContinueObjectivePrompt(obj, verb){
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.innerHTML = `
+      <div class="modal-box">
+        <h3 style="font-size:15px; margin-bottom:8px;">Objectif ${verb} : « ${escapeHtml(obj.title)} »</h3>
+        <p class="label">Voulez-vous poursuivre cet objectif à une nouvelle étape (nouveau niveau) ou sur une nouvelle période ?</p>
+        <div style="display:flex; gap:10px; margin-top:14px;">
+          <button type="button" class="btn" id="continue-obj-yes">Oui</button>
+          <button type="button" class="continue-btn" id="continue-obj-no">Non</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    const close = ()=> overlay.remove();
+    overlay.addEventListener("click", e=>{ if (e.target === overlay) close(); });
+    overlay.querySelector("#continue-obj-no").addEventListener("click", close);
+    overlay.querySelector("#continue-obj-yes").addEventListener("click", ()=>{
+      close();
+      openContinueObjectiveForm(obj);
+    });
+  }
+
+  function openContinueObjectiveForm(obj){
+    const objHM = hoursToHM(obj.weekly_hours_target);
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.innerHTML = `
+      <div class="modal-box">
+        <h3 style="font-size:15px; margin-bottom:8px;">Nouvelle étape pour « ${escapeHtml(obj.title)} »</h3>
+        <p class="label">Titre, niveau et période sont modifiables : c'est reparti pour un nouvel objectif.</p>
+        <form id="continue-obj-form" style="display:flex; flex-direction:column; gap:10px; margin-top:12px;">
+          <div>
+            <label class="field-label" for="continue-obj-title">Titre</label>
+            <input id="continue-obj-title" value="${escapeHtml(obj.title)}" required />
+          </div>
+          <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); cursor:pointer;">
+            <input type="checkbox" id="continue-obj-monthly" style="width:auto;" ${obj.is_monthly ? "checked" : ""} /> Objectif mensuel (à cocher 1x/mois, le dernier jour)
+          </label>
+          <div id="continue-obj-hours-wrap" style="display:${obj.is_monthly ? "none" : "flex"}; gap:8px; align-items:center;">
+            <div>
+              <label class="field-label" for="continue-obj-hours">Nouveau niveau (volume cible)</label>
+              <div class="hours-input">
+                <input id="continue-obj-hours" type="number" min="0" step="1" value="${objHM.h}" />
+                <span class="muted" style="font-size:12px;">h</span>
+                <input id="continue-obj-minutes" type="number" min="0" max="59" step="5" value="${objHM.m}" />
+                <span class="muted" style="font-size:12px;">min /sem</span>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex; gap:8px;">
+            <div style="flex:1;">
+              <label class="field-label" for="continue-obj-start">Début</label>
+              <input id="continue-obj-start" type="date" value="${todayISO()}" />
+            </div>
+            <div style="flex:1;">
+              <label class="field-label" for="continue-obj-end">Échéance</label>
+              <input id="continue-obj-end" type="date" />
+            </div>
+          </div>
+          <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); cursor:pointer;">
+            <input type="checkbox" id="continue-obj-no-end" style="width:auto;" /> Tous les jours (sans échéance)
+          </label>
+          <div style="display:flex; gap:10px; margin-top:6px;">
+            <button type="submit" class="btn">C'est reparti</button>
+            <button type="button" class="continue-btn" id="continue-obj-cancel">Annuler</button>
+          </div>
+        </form>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    const close = ()=> overlay.remove();
+    overlay.addEventListener("click", e=>{ if (e.target === overlay) close(); });
+    overlay.querySelector("#continue-obj-cancel").addEventListener("click", close);
+    overlay.querySelector("#continue-obj-monthly").addEventListener("change", e=>{
+      overlay.querySelector("#continue-obj-hours-wrap").style.display = e.target.checked ? "none" : "flex";
+    });
+    overlay.querySelector("#continue-obj-no-end").addEventListener("change", e=>{
+      overlay.querySelector("#continue-obj-end").disabled = e.target.checked;
+      if (e.target.checked) overlay.querySelector("#continue-obj-end").value = "";
+    });
+    overlay.querySelector("#continue-obj-form").addEventListener("submit", async e=>{
+      e.preventDefault();
+      const title = overlay.querySelector("#continue-obj-title").value.trim();
+      if (!title) return;
+      const isMonthly = overlay.querySelector("#continue-obj-monthly").checked;
+      const noEnd = overlay.querySelector("#continue-obj-no-end").checked;
+      const startDate = overlay.querySelector("#continue-obj-start").value || todayISO();
+      const endDate = noEnd ? "" : overlay.querySelector("#continue-obj-end").value;
+      const hours = isMonthly ? 0 : hmToHours(overlay.querySelector("#continue-obj-hours").value, overlay.querySelector("#continue-obj-minutes").value);
+      const year = endDate ? new Date(endDate+"T00:00:00").getFullYear() : new Date(startDate+"T00:00:00").getFullYear();
+      const draft = {
+        title, category: obj.category, start_date: startDate || null, target_date: endDate || null,
+        weekly_hours_target: hours, achieved: false, history: [],
+        currentYear: year, is_monthly: isMonthly, monthly_completions: {}
+      };
+      if (SUPABASE_CONFIGURED){
+        try {
+          const created = await db.insertObjective(state.userId, mapObjectiveToDb(draft));
+          state.objectives.push(created);
+        } catch(err){ showToast("Erreur lors de la création de la suite : " + err.message, "error"); return; }
+      } else {
+        state.objectives.push({ id: nextId(), ...draft });
+      }
+      close();
+      renderAll();
+      showToast("Nouvelle étape créée pour « " + title + " ».", "success");
+    });
+  }
+
   // =========================================================
   // AGENDA : tâches ponctuelles à une date précise
   // =========================================================
@@ -1140,14 +1261,17 @@ export function initJamsPlansApp() {
             <button class="achieve-toggle">${obj.achieved ? "Marquer non atteint" : "Marquer atteint"}</button>
             <button class="continue-btn edit-obj-btn">Modifier</button>
             ${isOngoing ? '<button class="continue-btn stop-objective-btn">Arrêter</button>' : ""}
-            ${!obj.achieved && !isOngoing ? '<button class="continue-btn continue-year-btn">Poursuivre en N+1</button>' : ""}
+            ${!obj.achieved && !isOngoing ? '<button class="continue-btn continue-year-btn">Poursuivre</button>' : ""}
           </div>
         `;
         li.querySelector(".del-btn").addEventListener("click", ()=>deleteObjective(obj.id));
         li.querySelector(".edit-obj-btn").addEventListener("click", ()=>startEditingObjective(obj));
         const stopBtn = li.querySelector(".stop-objective-btn");
         if (stopBtn){
-          stopBtn.addEventListener("click", ()=>stopOngoingObjective(obj.id));
+          stopBtn.addEventListener("click", async ()=>{
+            await stopOngoingObjective(obj.id);
+            openContinueObjectivePrompt(obj, "arrêté");
+          });
         }
         li.querySelector(".achieve-toggle").addEventListener("click", async ()=>{
           const nextAchieved = !obj.achieved;
@@ -1158,10 +1282,11 @@ export function initJamsPlansApp() {
             obj.achieved = nextAchieved;
           }
           renderAll();
+          if (nextAchieved) openContinueObjectivePrompt(obj, "atteint");
         });
         const continueBtn = li.querySelector(".continue-year-btn");
         if (continueBtn){
-          continueBtn.addEventListener("click", ()=>continueObjectiveToNextYear(obj.id));
+          continueBtn.addEventListener("click", ()=>openContinueObjectiveForm(obj));
         }
         list.appendChild(li);
       });
@@ -1359,7 +1484,7 @@ export function initJamsPlansApp() {
           <div style="display:flex; gap:12px;">
             <button class="achieve-toggle">Marquer atteint</button>
             <button class="continue-btn edit-obj-btn">Modifier</button>
-            <button class="continue-btn continue-year-btn">Poursuivre en N+1</button>
+            <button class="continue-btn continue-year-btn">Poursuivre</button>
           </div>
         `;
         li.querySelector(".achieve-toggle").addEventListener("click", async ()=>{
@@ -1370,9 +1495,10 @@ export function initJamsPlansApp() {
             obj.achieved = true;
           }
           renderAll();
+          openContinueObjectivePrompt(obj, "atteint");
         });
         li.querySelector(".edit-obj-btn").addEventListener("click", ()=>startEditingObjective(obj));
-        li.querySelector(".continue-year-btn").addEventListener("click", ()=>continueObjectiveToNextYear(obj.id));
+        li.querySelector(".continue-year-btn").addEventListener("click", ()=>openContinueObjectiveForm(obj));
         failureList.appendChild(li);
       });
     }
@@ -2135,7 +2261,8 @@ export function initJamsPlansApp() {
     // défaut" a été retiré) : dans ce cas, simplement pas de bloc structure.
     if (template){
       template.blocks.forEach(b=>{
-        items.push({ start: b.start, end: b.end, label: b.label, kind: "template", status: null });
+        const linkedObjective = b.objective_id ? state.objectives.find(o=>o.id===b.objective_id) : null;
+        items.push({ start: b.start, end: b.end, label: b.label, kind: "template", status: null, objectiveTitle: linkedObjective ? linkedObjective.title : null });
       });
     }
 
@@ -2148,14 +2275,15 @@ export function initJamsPlansApp() {
         if (obj.target_date && dateStr > obj.target_date) return;
       }
       const log = state.dailyLogs.find(l=>l.routine_id===r.id && l.log_date===dateStr);
-      items.push({ start: r.start_time.slice(0,5), end: r.end_time.slice(0,5), label: r.label, kind: "routine", status: log ? log.status : null, hours: log ? log.actual_hours : null, planned: r.planned_hours });
+      items.push({ start: r.start_time.slice(0,5), end: r.end_time.slice(0,5), label: r.label, kind: "routine", status: log ? log.status : null, hours: log ? log.actual_hours : null, planned: r.planned_hours, objectiveTitle: obj ? obj.title : null });
     });
 
     // Tâches d'agenda avec créneau, dont la plage de dates couvre ce jour.
     state.agendaTasks.filter(t=> dateStr >= t.start_date && dateStr <= t.end_date && t.planning_start && t.planning_end).forEach(t=>{
       const log = state.dailyLogs.find(l=>l.agenda_task_id===t.id && l.log_date===dateStr);
       const isPrayer = (t.label||"").startsWith(PRAYER_LABEL_PREFIX);
-      items.push({ start: t.planning_start.slice(0,5), end: t.planning_end.slice(0,5), label: t.label, kind: "agenda", status: log ? log.status : null, hours: log ? log.actual_hours : null, planned: t.planned_hours, isPrayer });
+      const obj = t.objective_id ? state.objectives.find(o=>o.id===t.objective_id) : null;
+      items.push({ start: t.planning_start.slice(0,5), end: t.planning_end.slice(0,5), label: t.label, kind: "agenda", status: log ? log.status : null, hours: log ? log.actual_hours : null, planned: t.planned_hours, isPrayer, objectiveTitle: obj ? obj.title : null });
     });
 
     // Tâches sans horaire précis (agenda libre) : listées à part, en bas.
@@ -2165,14 +2293,18 @@ export function initJamsPlansApp() {
 
     const rowsHtml = items.map(it=>{
       const statusKey = it.status || "none";
-      const cat = it.kind === "template" ? it.label : (it.kind === "routine" ? categoryOfObjective(state.routines.find(r=>r.label===it.label)?.objective_id) : it.label);
       const swatchColor = it.kind === "template" ? categoryColor(it.label) : "var(--violet)";
       const hoursText = it.hours !== null && it.hours !== undefined ? ` · ${it.hours}h/${it.planned}h` : "";
+      // Chaque élément (bloc de journée type ou routine/tâche) est rattaché
+      // à son objectif quand il y en a un, pour qu'on voie clairement à
+      // quel objectif chaque créneau appartient (plutôt qu'un simple bloc
+      // anonyme).
+      const objectiveTag = it.objectiveTitle ? ` <span class="muted" style="font-size:10.5px;">· ${escapeHtml(it.objectiveTitle)}</span>` : "";
       return `
         <div class="dc-item">
           <span class="dc-swatch" style="background:${swatchColor};"></span>
           <span class="dc-time">${it.isPrayer ? it.start : `${it.start}–${it.end}`}</span>
-          <span class="dc-label">${escapeHtml(it.label)}${it.kind !== "template" ? hoursText : ""}</span>
+          <span class="dc-label">${escapeHtml(it.label)}${it.kind !== "template" ? hoursText : ""}${objectiveTag}</span>
           ${it.kind !== "template" ? `<span class="dc-status ${statusKey}">${statusLabel(it.status)}</span>` : `<span class="dc-status none">structure</span>`}
         </div>
       `;
@@ -2420,7 +2552,7 @@ export function initJamsPlansApp() {
         </div>
         <div class="status-row">
           <button class="status-btn" data-status="done">${isPrayer ? "Fait à l'heure" : "Fait"}</button>
-          <button class="status-btn" data-status="partial">Fait</button>
+          <button class="status-btn" data-status="partial">${isPrayer ? "Fait" : "Partiel"}</button>
           <button class="status-btn" data-status="not_done">${isPrayer ? "Pas fait" : "Non fait"}</button>
         </div>
         <div style="margin-top:10px; display:flex; align-items:center; gap:8px; ${isPrayer ? "display:none;" : ""}">
