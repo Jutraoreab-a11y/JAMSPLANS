@@ -1147,31 +1147,12 @@ export function initJamsPlansApp() {
     return pairs;
   }
 
-  // Bannière d'alerte au-dessus de la liste d'objectifs : chevauchements de
-  // dates + rappel personnalisé si trop d'objectifs sont menés de front.
+  // Bannières d'alerte retirées à la demande de l'utilisateur (dispersion
+  // des objectifs + chevauchement de dates) : la zone reste vide.
   function renderObjectiveAlerts(pursuedObjectives){
     const wrap = document.getElementById("objective-alerts");
     if (!wrap) return;
-    const alerts = [];
-    const name = (state.profile.firstName || "").trim();
-    const hello = name ? " " + escapeHtml(name) : "";
-
-    // Seuil de dispersion : dès 3 objectifs suivis de front.
-    if (pursuedObjectives.length >= 3){
-      alerts.push(`<p class="limit-alert">Attention${hello}, ${pursuedObjectives.length} objectifs en même temps : mieux vaut se concentrer sur 1 ou 2.</p>`);
-    }
-
-    // Chevauchements de dates : même signal que ci-dessus, mais on ne le
-    // déclenche qu'à partir du 4e objectif impliqué dans au moins un
-    // chevauchement — pas dès la première paire, pour ne pas spammer.
-    const overlaps = findOverlappingObjectivePairs(pursuedObjectives);
-    const overlappingIds = new Set();
-    overlaps.forEach(([a,b])=>{ overlappingIds.add(a.id); overlappingIds.add(b.id); });
-    if (overlappingIds.size >= 4){
-      alerts.push(`<p class="limit-alert">Attention${hello}, ${overlappingIds.size} objectifs se chevauchent en même temps : vérifie ton planning.</p>`);
-    }
-
-    wrap.innerHTML = alerts.join("");
+    wrap.innerHTML = "";
   }
 
   // =========================================================
@@ -1695,7 +1676,7 @@ export function initJamsPlansApp() {
       <div class="dt-legend-item">
         <span class="dt-swatch" style="background:var(--violet);"></span>
         <span>${escapeHtml(b.label)}</span>
-        <span class="mono muted">${b.start}–${b.end}</span>
+        <span class="mono muted">${b.start}</span>
       </div>
     `).join("");
     legend.innerHTML = blocksHtml + prayerHtml;
@@ -1921,7 +1902,8 @@ export function initJamsPlansApp() {
     // Tâches d'agenda avec créneau, dont la plage de dates couvre ce jour.
     state.agendaTasks.filter(t=> dateStr >= t.start_date && dateStr <= t.end_date && t.planning_start && t.planning_end).forEach(t=>{
       const log = state.dailyLogs.find(l=>l.agenda_task_id===t.id && l.log_date===dateStr);
-      items.push({ start: t.planning_start.slice(0,5), end: t.planning_end.slice(0,5), label: t.label, kind: "agenda", status: log ? log.status : null, hours: log ? log.actual_hours : null, planned: t.planned_hours });
+      const isPrayer = (t.label||"").startsWith(PRAYER_LABEL_PREFIX);
+      items.push({ start: t.planning_start.slice(0,5), end: t.planning_end.slice(0,5), label: t.label, kind: "agenda", status: log ? log.status : null, hours: log ? log.actual_hours : null, planned: t.planned_hours, isPrayer });
     });
 
     // Tâches sans horaire précis (agenda libre) : listées à part, en bas.
@@ -1937,7 +1919,7 @@ export function initJamsPlansApp() {
       return `
         <div class="dc-item">
           <span class="dc-swatch" style="background:${swatchColor};"></span>
-          <span class="dc-time">${it.start}–${it.end}</span>
+          <span class="dc-time">${it.isPrayer ? it.start : `${it.start}–${it.end}`}</span>
           <span class="dc-label">${escapeHtml(it.label)}${it.kind !== "template" ? hoursText : ""}</span>
           ${it.kind !== "template" ? `<span class="dc-status ${statusKey}">${statusLabel(it.status)}</span>` : `<span class="dc-status none">structure</span>`}
         </div>
@@ -2011,8 +1993,7 @@ export function initJamsPlansApp() {
         <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
           <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--empty)" stroke-width="${sw}" />
           ${segmentsHtml}
-          <text x="${cx}" y="${cy-4}" text-anchor="middle" font-size="15" font-family="'IBM Plex Mono',monospace" fill="var(--ink)">${dayLabel}</text>
-          <text x="${cx}" y="${cy+16}" text-anchor="middle" font-size="10" fill="var(--muted)">fond = structure, couleur = statut réel</text>
+          <text x="${cx}" y="${cy}" text-anchor="middle" font-size="15" font-family="'IBM Plex Mono',monospace" fill="var(--ink)">${dayLabel}</text>
         </svg>
       </div>
     `;
@@ -2648,7 +2629,6 @@ export function initJamsPlansApp() {
     const prayerEnabledCheckbox = document.getElementById("prayer-enabled");
     if (prayerEnabledCheckbox) prayerEnabledCheckbox.checked = !!state.prayerEnabled;
     renderPrayerTimesToday();
-    renderWeeklyLimits();
   }
 
   document.getElementById("prayer-save")?.addEventListener("click", async ()=>{
@@ -2871,86 +2851,9 @@ export function initJamsPlansApp() {
 
   // =========================================================
   // LIMITES HEBDOMADAIRES PAR CATÉGORIE
-  // =========================================================
-  function knownCategories(){
-    const cats = new Set(Object.keys(state.weeklyLimits));
-    state.objectives.forEach(o=> cats.add(o.category || "Autre"));
-    if (state.agendaTasks.some(t=>!t.objective_id) || state.dailyLogs.some(l=>l.agenda_task_id && !l.objective_id)){
-      cats.add("Agenda");
-    }
-    return Array.from(cats);
-  }
-
-  function hoursUsedThisWeekByCategory(category){
-    const currentWeek = logsInDateWindow(0, 6);
-    return currentWeek
-      .filter(l=> categoryForLog(l) === category)
-      .reduce((sum,l)=> sum + l.actual_hours, 0);
-  }
-
-  function renderWeeklyLimits(){
-    const wrap = document.getElementById("weekly-limits-list");
-    const categories = knownCategories();
-
-    if (categories.length === 0){
-      wrap.innerHTML = '<p class="muted" style="font-size:13px;">Créez un objectif avec une catégorie pour définir une limite.</p>';
-      return;
-    }
-
-    wrap.innerHTML = categories.map(cat=>{
-      const max = state.weeklyLimits[cat] || 0;
-      const used = hoursUsedThisWeekByCategory(cat);
-      const pct = max > 0 ? Math.min((used/max)*100, 100) : 0;
-      const ratio = max > 0 ? used/max : 0;
-      const barColor = ratio >= 1 ? "linear-gradient(90deg, #C4453A, #E2685C)"
-        : ratio >= 0.8 ? "linear-gradient(90deg, #B9822C, #E0A83E)"
-        : "linear-gradient(90deg, #3C8C5C, #4CAF6D)";
-
-      let alertHtml = "";
-      if (max > 0 && ratio >= 1.3){
-        alertHtml = `<p class="limit-alert">Limite largement dépassée (${used.toFixed(1)}h / ${max}h). Risque de surmenage, pense à lever le pied.</p>`;
-      } else if (max > 0 && ratio >= 1){
-        alertHtml = `<p class="limit-alert">Limite dépassée cette semaine (${used.toFixed(1)}h / ${max}h).</p>`;
-      }
-
-      return `
-        <div class="limit-row">
-          <div class="limit-row-head">
-            <span class="cat-name"><span class="cat-dot-lg" style="background:${categoryColor(cat)};"></span>${escapeHtml(cat)}</span>
-            <span class="limit-input-inline">
-              max <input type="number" min="0" step="1" class="limit-max-input" data-category="${escapeHtml(cat)}" value="${max}" /> h/sem
-            </span>
-          </div>
-          <div class="limit-gauge-track"><div class="limit-gauge-fill" style="width:${pct}%; background:${barColor};"></div></div>
-          <p class="limit-used-text">${used.toFixed(1)}h utilisées cette semaine${max > 0 ? ` sur ${max}h` : " (aucune limite définie)"}</p>
-          ${alertHtml}
-        </div>
-      `;
-    }).join("");
-  }
-
-  document.getElementById("limits-save").addEventListener("click", async ()=>{
-    const msg = document.getElementById("limits-message");
-    msg.classList.remove("error", "success");
-
-    const newLimits = {};
-    document.querySelectorAll(".limit-max-input").forEach(input=>{
-      const cat = input.dataset.category;
-      const val = parseFloat(input.value) || 0;
-      if (val > 0) newLimits[cat] = val;
-    });
-    state.weeklyLimits = newLimits;
-
-    if (SUPABASE_CONFIGURED){
-      try { await db.upsertProfile(state.userId, { weekly_limits: newLimits }); }
-      catch(err){ msg.textContent = "Erreur : " + err.message; msg.classList.add("error"); return; }
-    }
-
-    msg.textContent = "Limites enregistrées.";
-    msg.classList.add("success");
-    renderWeeklyLimits();
-  });
-
+  // Section "Limites hebdomadaires" retirée du Profil à la demande de
+  // l'utilisateur (knownCategories / hoursUsedThisWeekByCategory /
+  // renderWeeklyLimits / le bouton limits-save ont été supprimés).
   function renderAll(){
     renderGreeting();
     renderAppYearSelector();
