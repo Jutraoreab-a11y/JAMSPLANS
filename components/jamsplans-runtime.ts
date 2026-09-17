@@ -1639,9 +1639,16 @@ export function initJamsPlansApp() {
     const C = 2 * Math.PI * r;
     const activeTpl = getActiveTemplate();
     const blocks = activeTpl ? activeTpl.blocks : [];
+    // Les blocs "secondaires" (case "Chevauche un autre créneau" cochée, ex :
+    // lecture pendant un trajet) occupent un temps déjà compté par le
+    // créneau qu'ils chevauchent : ils sont retirés de l'anneau principal et
+    // du total, et affichés séparément sur leur propre anneau ci-dessous.
+    const primaryBlocks = blocks.filter(b=>!b.secondary);
+    const secondaryBlocks = blocks.filter(b=>b.secondary);
     const prayerBlocks = getTodaysPrayerPseudoBlocks();
 
-    const segments = blocksToRingSegments(blocks);
+    const segments = blocksToRingSegments(primaryBlocks);
+    const secondarySegments = blocksToRingSegments(secondaryBlocks);
     const prayerSegments = blocksToRingSegments(prayerBlocks);
     const blockColorMap = buildDayBlockColorMap(blocks);
 
@@ -1659,9 +1666,28 @@ export function initJamsPlansApp() {
       </circle>`;
     }).join("");
 
+    // Anneau intermédiaire, dédié aux activités secondaires : superposition
+    // purement visuelle sur son propre anneau, jamais mélangée aux créneaux
+    // structurants ni comptée dans le total "bloquées / 24h" ci-dessous.
+    const rSecondary = r - sw/2 - 8, swSecondary = 10;
+    const CSecondary = 2 * Math.PI * rSecondary;
+    const secondaryRingBase = secondaryBlocks.length
+      ? `<circle cx="${cx}" cy="${cy}" r="${rSecondary}" fill="none" stroke="var(--empty)" stroke-width="${swSecondary}" />`
+      : "";
+    const secondarySegmentsHtml = secondarySegments.map(seg=>{
+      const startFrac = seg.startMin/1440;
+      const arcLen = (seg.lenMin/1440)*CSecondary;
+      const dashoffset = CSecondary*(1-startFrac);
+      return `<circle cx="${cx}" cy="${cy}" r="${rSecondary}" fill="none" stroke="${blockColorMap[seg.block.label] || categoryColor(seg.block.label)}" stroke-width="${swSecondary}"
+        stroke-dasharray="${arcLen} ${CSecondary-arcLen}" stroke-dashoffset="${dashoffset}"
+        transform="rotate(-90 ${cx} ${cy})" class="dt-ring-seg-secondary" data-block-id="${seg.block.id}">
+        <title>${escapeHtml(seg.block.label)} (${formatBlockDuration(seg.block.start, seg.block.end)}, ${seg.block.start} à ${seg.block.end}) — superposé, non compté dans le total</title>
+      </circle>`;
+    }).join("");
+
     // Anneau intérieur fin, dédié aux prières : superposition purement
     // visuelle, jamais mélangée aux blocs réels de la journée type.
-    const rPrayer = r - sw/2 - 8, swPrayer = 8;
+    const rPrayer = rSecondary - swSecondary/2 - 6 - 4, swPrayer = 8;
     const CPrayer = 2 * Math.PI * rPrayer;
     const prayerRingBase = prayerBlocks.length
       ? `<circle cx="${cx}" cy="${cy}" r="${rPrayer}" fill="none" stroke="var(--empty)" stroke-width="${swPrayer}" />`
@@ -1695,6 +1721,8 @@ export function initJamsPlansApp() {
       <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
         <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--empty)" stroke-width="${sw}" />
         ${segmentsHtml}
+        ${secondaryRingBase}
+        ${secondarySegmentsHtml}
         ${prayerRingBase}
         ${prayerSegmentsHtml}
         ${ticksHtml}
@@ -1710,7 +1738,7 @@ export function initJamsPlansApp() {
     const wrap = document.getElementById("day-template-progress");
     if (!wrap) return;
     const activeTpl = getActiveTemplate();
-    const blocks = activeTpl ? activeTpl.blocks : [];
+    const blocks = activeTpl ? activeTpl.blocks.filter(b=>!b.secondary) : [];
     const totalMin = blocks.reduce((sum,b)=>{
       const s = timeToMinutes(b.start), e = timeToMinutes(b.end);
       return sum + (e > s ? (e - s) : (1440 - s + e));
