@@ -1501,6 +1501,17 @@ export function initJamsPlansApp() {
     return h*60 + m;
   }
 
+  // Durée d'un bloc de journée type, affichée devant son libellé dans la
+  // légende (ex : "8h Sommeil", "1h30 Trajet") — gère le passage de minuit.
+  function formatBlockDuration(start, end){
+    const startMin = timeToMinutes(start);
+    const endMin = timeToMinutes(end);
+    const durMin = endMin > startMin ? (endMin - startMin) : (1440 - startMin + endMin);
+    const h = Math.floor(durMin/60);
+    const m = durMin % 60;
+    return m === 0 ? `${h}h` : `${h}h${String(m).padStart(2,"0")}`;
+  }
+
   // Convertit un bloc (éventuellement à cheval sur minuit) en une ou deux
   // plages [début,fin[ en minutes, pour pouvoir tester un chevauchement.
   function blockRanges(start, end){
@@ -1698,7 +1709,7 @@ export function initJamsPlansApp() {
     const blocksHtml = blocks.map(b=>`
       <div class="dt-legend-item" data-block-id="${b.id}">
         <span class="dt-swatch" style="background:${blockColorMap[b.label] || categoryColor(b.label)};"></span>
-        <span>${escapeHtml(b.label)}</span>
+        <span><span class="mono" style="font-weight:600;">${formatBlockDuration(b.start, b.end)}</span> ${escapeHtml(b.label)}</span>
         <span class="mono muted">${b.start}–${b.end}</span>
         <span style="display:flex; gap:8px; margin-left:auto;">
           <button type="button" class="achieve-toggle dt-edit-btn" style="margin-top:0;">Modifier</button>
