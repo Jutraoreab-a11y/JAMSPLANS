@@ -1547,6 +1547,11 @@ export function initJamsPlansApp() {
   // légende) — null quand le formulaire sert à ajouter un nouveau bloc.
   let editingDayTemplateBlockId = null;
 
+  // Période en cours de modification via le formulaire "+ Nouvelle période"
+  // (bouton "✎" affiché sur chaque pastille) — null quand le formulaire sert
+  // à créer une nouvelle période.
+  let editingPeriodId = null;
+
   // Le bouton "Par défaut" (période sans dates) a été retiré de
   // l'interface : plus aucune sélection automatique de repli. Si aucune
   // période datée ne correspond, il n'y a simplement pas de journée type
@@ -1769,6 +1774,25 @@ export function initJamsPlansApp() {
   // ancienne période "Par défaut" éventuellement présente dans les données
   // reste intacte en base mais n'apparaît plus (et n'est plus sélectionnable
   // depuis cette liste).
+  // Réinitialise le formulaire "+ Nouvelle période" et sort du mode édition
+  // (bouton "✎" d'une pastille) — sans toucher à son affichage (ouvert/fermé),
+  // laissé aux appelants.
+  function cancelPeriodEdit(){
+    editingPeriodId = null;
+    document.getElementById("np-name").value = "";
+    document.getElementById("np-start").value = "";
+    document.getElementById("np-end").value = "";
+    document.querySelectorAll("#np-weekdays input[type=checkbox]").forEach(cb=>{ cb.checked = false; });
+    document.getElementById("np-submit-btn").textContent = "Créer la période";
+    document.getElementById("np-cancel-edit-btn").style.display = "none";
+  }
+
+  document.getElementById("np-cancel-edit-btn").addEventListener("click", ()=>{
+    cancelPeriodEdit();
+    document.getElementById("new-period-form").style.display = "none";
+    document.getElementById("new-period-btn").classList.remove("active");
+  });
+
   function renderDayTemplatePeriods(){
     const wrap = document.getElementById("day-template-periods");
     const datedTemplates = state.dayTemplates.filter(t=>t.period_start && t.period_end);
@@ -1777,12 +1801,56 @@ export function initJamsPlansApp() {
       const weekdaysText = formatWeekdaysFr(t.weekdays);
       const detailText = weekdaysText ? `${rangeText} · ${weekdaysText}` : rangeText;
       const active = t.id === state.activeDayTemplateId ? " active" : "";
-      return `<button type="button" class="pill${active}" data-tpl-id="${t.id}">${escapeHtml(t.name)} <span class="muted" style="font-size:10.5px;">(${detailText})</span></button>`;
+      return `<div class="dt-period-item">
+        <button type="button" class="pill${active}" data-tpl-id="${t.id}">${escapeHtml(t.name)} <span class="muted" style="font-size:10.5px;">(${detailText})</span></button>
+        <button type="button" class="dt-period-edit-btn" data-tpl-id="${t.id}" title="Modifier cette période">✎</button>
+        <button type="button" class="dt-period-delete-btn" data-tpl-id="${t.id}" title="Supprimer cette période">✕</button>
+      </div>`;
     }).join("") + `<button type="button" id="new-period-btn" class="pill pill-new">+ Nouvelle période</button>`;
 
-    wrap.querySelectorAll("[data-tpl-id]").forEach(btn=>{
+    wrap.querySelectorAll(".pill[data-tpl-id]").forEach(btn=>{
       btn.addEventListener("click", ()=>{
         state.activeDayTemplateId = btn.dataset.tplId;
+        renderDayTemplate();
+      });
+    });
+    // Bouton "✎" : ouvre le formulaire pré-rempli avec les infos de cette
+    // période, et bascule son envoi en mode "modification" (editingPeriodId).
+    wrap.querySelectorAll(".dt-period-edit-btn").forEach(btn=>{
+      btn.addEventListener("click", ()=>{
+        const tpl = state.dayTemplates.find(t=>t.id===btn.dataset.tplId);
+        if (!tpl) return;
+        editingPeriodId = tpl.id;
+        document.getElementById("np-name").value = tpl.name || "";
+        document.getElementById("np-start").value = tpl.period_start || "";
+        document.getElementById("np-end").value = tpl.period_end || "";
+        const checkedDays = Array.isArray(tpl.weekdays) ? tpl.weekdays : [];
+        document.querySelectorAll("#np-weekdays input[type=checkbox]").forEach(cb=>{
+          cb.checked = checkedDays.includes(parseInt(cb.value, 10));
+        });
+        document.getElementById("np-submit-btn").textContent = "Enregistrer les modifications";
+        document.getElementById("np-cancel-edit-btn").style.display = "inline-block";
+        document.getElementById("new-period-form").style.display = "flex";
+        document.getElementById("new-period-btn").classList.add("active");
+        document.getElementById("np-name").focus();
+      });
+    });
+    // Bouton "✕" : supprime définitivement la période (et ses plages
+    // horaires associées). Suppression immédiate, comme pour les autres
+    // éléments de l'app (blocs, objectifs, tâches d'agenda…).
+    wrap.querySelectorAll(".dt-period-delete-btn").forEach(btn=>{
+      btn.addEventListener("click", async ()=>{
+        const id = btn.dataset.tplId;
+        if (editingPeriodId === id){
+          cancelPeriodEdit();
+          document.getElementById("new-period-form").style.display = "none";
+        }
+        state.dayTemplates = state.dayTemplates.filter(t=>t.id!==id);
+        if (state.activeDayTemplateId === id){
+          const remaining = state.dayTemplates.filter(t=>t.period_start && t.period_end);
+          state.activeDayTemplateId = remaining[0] ? remaining[0].id : null;
+        }
+        await saveDayTemplates();
         renderDayTemplate();
       });
     });
@@ -1795,8 +1863,14 @@ export function initJamsPlansApp() {
     newPeriodBtn.addEventListener("click", ()=>{
       const panel = document.getElementById("new-period-form");
       const isOpen = panel.style.display !== "none" && panel.style.display !== "";
-      panel.style.display = isOpen ? "none" : "flex";
-      newPeriodBtn.classList.toggle("active", !isOpen);
+      if (isOpen){
+        panel.style.display = "none";
+        if (editingPeriodId) cancelPeriodEdit();
+        newPeriodBtn.classList.remove("active");
+      } else {
+        panel.style.display = "flex";
+        newPeriodBtn.classList.add("active");
+      }
     });
   }
 
@@ -1866,15 +1940,23 @@ export function initJamsPlansApp() {
       return;
     }
     const weekdays = Array.from(document.querySelectorAll("#np-weekdays input[type=checkbox]:checked")).map(cb=>parseInt(cb.value, 10));
-    const tpl = { id: nextId(), name, period_start: start, period_end: end, weekdays, blocks: [] };
-    state.dayTemplates.push(tpl);
-    state.activeDayTemplateId = tpl.id;
+    if (editingPeriodId){
+      const tpl = state.dayTemplates.find(t=>t.id===editingPeriodId);
+      if (tpl){
+        tpl.name = name;
+        tpl.period_start = start;
+        tpl.period_end = end;
+        tpl.weekdays = weekdays;
+      }
+    } else {
+      const tpl = { id: nextId(), name, period_start: start, period_end: end, weekdays, blocks: [] };
+      state.dayTemplates.push(tpl);
+      state.activeDayTemplateId = tpl.id;
+    }
     await saveDayTemplates();
-    document.getElementById("np-name").value = "";
-    document.getElementById("np-start").value = "";
-    document.getElementById("np-end").value = "";
-    document.querySelectorAll("#np-weekdays input[type=checkbox]").forEach(cb=>{ cb.checked = false; });
+    cancelPeriodEdit();
     document.getElementById("new-period-form").style.display = "none";
+    document.getElementById("new-period-btn").classList.remove("active");
     renderDayTemplate();
   });
 
