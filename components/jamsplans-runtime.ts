@@ -1737,10 +1737,15 @@ export function initJamsPlansApp() {
       return;
     }
     const blockColorMap = buildDayBlockColorMap(blocks);
+    // Un bloc "secondaire" (coché "Chevauche un autre créneau" dans la fiche,
+    // ex : lecture pendant un trajet) est affiché en retrait, avec un petit
+    // repère juste avant son horaire, pour bien le distinguer des créneaux
+    // structurants qui se suivent — sans rien changer d'autre pour eux.
     const blocksHtml = blocks.map(b=>`
-      <div class="dt-legend-item" data-block-id="${b.id}">
+      <div class="dt-legend-item${b.secondary ? " dt-legend-secondary" : ""}" data-block-id="${b.id}">
         <span class="dt-swatch" style="background:${blockColorMap[b.label] || categoryColor(b.label)};"></span>
         <span><span class="mono" style="font-weight:600;">${formatBlockDuration(b.start, b.end)}</span> ${escapeHtml(b.label)}</span>
+        ${b.secondary ? '<span class="dt-secondary-badge" title="Chevauche un autre créneau">⤷ superposé</span>' : ""}
         <span class="mono muted">${b.start}–${b.end}</span>
         <span style="display:flex; gap:8px; margin-left:auto;">
           <button type="button" class="achieve-toggle dt-edit-btn" style="margin-top:0;">Modifier</button>
@@ -1769,6 +1774,7 @@ export function initJamsPlansApp() {
         document.getElementById("dt-start").value = block.start;
         document.getElementById("dt-end").value = block.end;
         document.getElementById("dt-label").value = block.label;
+        document.getElementById("dt-secondary").checked = !!block.secondary;
         document.getElementById("dt-submit-btn").textContent = "Enregistrer les modifications";
         document.getElementById("dt-cancel-edit-btn").style.display = "inline-block";
         document.getElementById("dt-label").focus();
@@ -1788,6 +1794,7 @@ export function initJamsPlansApp() {
     document.getElementById("dt-start").value = "09:00";
     document.getElementById("dt-end").value = "10:00";
     document.getElementById("dt-label").value = "";
+    document.getElementById("dt-secondary").checked = false;
     document.getElementById("dt-submit-btn").textContent = "+ Ajouter";
     document.getElementById("dt-cancel-edit-btn").style.display = "none";
   }
@@ -2002,6 +2009,7 @@ export function initJamsPlansApp() {
     const start = document.getElementById("dt-start").value;
     const end = document.getElementById("dt-end").value;
     const label = document.getElementById("dt-label").value.trim();
+    const secondary = document.getElementById("dt-secondary").checked;
     if (!start || !end || !label) return;
 
     // Le chevauchement entre créneaux est volontairement autorisé (ex : lire
@@ -2009,15 +2017,16 @@ export function initJamsPlansApp() {
 
     if (editingDayTemplateBlockId){
       const block = activeTpl.blocks.find(b=>b.id===editingDayTemplateBlockId);
-      if (block){ block.start = start; block.end = end; block.label = label; }
+      if (block){ block.start = start; block.end = end; block.label = label; block.secondary = secondary; }
       cancelDayTemplateEdit();
     } else {
-      activeTpl.blocks.push({ id: nextId(), start, end, label });
+      activeTpl.blocks.push({ id: nextId(), start, end, label, secondary });
       // Auto-chaînage : la fin du bloc qu'on vient d'ajouter devient le début
       // proposé pour le prochain, pour ne pas ressaisir l'heure à chaque fois.
       document.getElementById("dt-start").value = end;
       document.getElementById("dt-end").value = "";
       document.getElementById("dt-label").value = "";
+      document.getElementById("dt-secondary").checked = false;
     }
     await saveDayTemplates();
     renderDayTemplate();

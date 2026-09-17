@@ -270,6 +270,14 @@
   .dt-legend-item .dt-swatch{width:10px; height:10px; border-radius:3px; flex-shrink:0;}
   .dt-legend-item span:nth-child(2){flex:1;}
   .dt-legend-item .dt-delete-btn{font-size:11px;}
+  /* Bloc "secondaire" (chevauche un autre créneau, ex : lecture pendant un
+     trajet) : léger retrait + petit repère avant l'horaire, pour le
+     distinguer d'un créneau structurant sans changer sa ligne autrement. */
+  .dt-legend-item.dt-legend-secondary{padding-left:20px; opacity:.92;}
+  .dt-secondary-badge{
+    font-size:10px; color:var(--muted); border:1px solid var(--line); border-radius:4px;
+    padding:1px 6px; white-space:nowrap;
+  }
 
   .gantt-chart-inner{display:flex; flex-direction:column; gap:10px;}
   .gantt-months{display:grid; grid-template-columns:repeat(12, 1fr); gap:2px; font-size:10px; color:var(--muted); padding-left:150px;}
