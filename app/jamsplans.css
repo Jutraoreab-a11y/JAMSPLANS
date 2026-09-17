@@ -107,6 +107,8 @@
     padding:5px 12px; font-size:12px; color:var(--muted); cursor:pointer; font-family:inherit;
   }
   button.pill.active{border-color:var(--navy-btn); background:var(--navy-btn); color:#F5F7FC;}
+  button.pill.pill-new{border:1.5px solid var(--navy-btn); color:var(--navy-btn); font-weight:600;}
+  button.pill.pill-new.active{background:var(--navy-btn); color:#F5F7FC; border-color:var(--navy-btn);}
 
   .obj-form{display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end;}
   .obj-form > div{display:flex; flex-direction:column; min-width:130px;}

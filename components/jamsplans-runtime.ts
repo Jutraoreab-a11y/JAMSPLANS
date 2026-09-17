@@ -157,6 +157,26 @@ export function initJamsPlansApp() {
     for (let i=0; i<category.length; i++) hash = (hash * 31 + category.charCodeAt(i)) % CATEGORY_FALLBACK_PALETTE.length;
     return CATEGORY_FALLBACK_PALETTE[Math.abs(hash) % CATEGORY_FALLBACK_PALETTE.length];
   }
+
+  // Palette dédiée aux éléments de la journée type (Sommeil, Trajet,
+  // Travail...) : contrairement à categoryColor() (pensée pour les
+  // catégories d'objectifs, avec peu de teintes et donc des risques de
+  // couleurs proches), chaque libellé distinct d'une même journée type
+  // reçoit une couleur bien différenciée, dans l'ordre de première
+  // apparition (par horaire de début) au sein de cette journée type.
+  const DAY_BLOCK_PALETTE = ["#3B5BDB", "#0E9394", "#B0559C", "#C2410C", "#4E7A51", "#2C6E8C", "#946B4D", "#7C3AED", "#B5651D", "#1D7A8C"];
+  function buildDayBlockColorMap(blocks){
+    const sorted = [...blocks].sort((a,b)=>timeToMinutes(a.start)-timeToMinutes(b.start));
+    const map = {};
+    let next = 0;
+    sorted.forEach(b=>{
+      if (!(b.label in map)){
+        map[b.label] = DAY_BLOCK_PALETTE[next % DAY_BLOCK_PALETTE.length];
+        next++;
+      }
+    });
+    return map;
+  }
   function categoryOfObjective(objectiveId){
     const obj = state.objectives.find(o=>o.id===objectiveId);
     return obj ? (obj.category || "Autre") : "Autre";
@@ -285,6 +305,14 @@ export function initJamsPlansApp() {
     if (end) return `échéance ${formatDateFr(end)}`;
     if (start) return `depuis ${formatDateFr(start)}`;
     return "";
+  }
+  // Jours de la semaine (convention JS Date#getDay() : 0=Dimanche..6=Samedi),
+  // affichés dans l'ordre français habituel Lun -> Dim.
+  const WEEKDAY_LABELS_FR = { 0:"Dim", 1:"Lun", 2:"Mar", 3:"Mer", 4:"Jeu", 5:"Ven", 6:"Sam" };
+  const WEEKDAY_ORDER_FR = [1,2,3,4,5,6,0];
+  function formatWeekdaysFr(weekdays){
+    if (!Array.isArray(weekdays) || weekdays.length === 0) return "";
+    return WEEKDAY_ORDER_FR.filter(d=>weekdays.includes(d)).map(d=>WEEKDAY_LABELS_FR[d]).join(", ");
   }
   function isoDaysFromToday(offsetDays){
     const d = new Date();
@@ -1516,11 +1544,17 @@ export function initJamsPlansApp() {
     return state.dayTemplates.find(t=>t.id===state.activeDayTemplateId) || null;
   }
 
-  // Retrouve la journée type applicable à une date donnée : uniquement
-  // celle dont la période (début->fin) couvre cette date, sinon aucune.
+  // Retrouve la journée type applicable à une date donnée : celle dont la
+  // période (début->fin) couvre cette date, ET dont la liste de jours de la
+  // semaine (si renseignée) inclut le jour de cette date. Une période sans
+  // jours cochés s'applique à tous les jours de sa plage de dates. Ça permet
+  // par exemple une journée type "Semaine" (Lun-Ven) et une autre "Week-end"
+  // (Sam-Dim) actives sur la même plage de dates.
   function getTemplateForDate(dateStr){
+    const dow = new Date(dateStr+"T00:00:00").getDay();
     return state.dayTemplates.find(t=>
-      t.period_start && t.period_end && dateStr >= t.period_start && dateStr <= t.period_end
+      t.period_start && t.period_end && dateStr >= t.period_start && dateStr <= t.period_end &&
+      (!Array.isArray(t.weekdays) || t.weekdays.length === 0 || t.weekdays.includes(dow))
     ) || null;
   }
 
@@ -1567,6 +1601,7 @@ export function initJamsPlansApp() {
 
     const segments = blocksToRingSegments(blocks);
     const prayerSegments = blocksToRingSegments(prayerBlocks);
+    const blockColorMap = buildDayBlockColorMap(blocks);
 
     const totalBlockedMin = segments.reduce((s,seg)=>s+seg.lenMin, 0);
     const totalHours = Math.round((totalBlockedMin/60)*10)/10;
@@ -1575,7 +1610,7 @@ export function initJamsPlansApp() {
       const startFrac = seg.startMin/1440;
       const arcLen = (seg.lenMin/1440)*C;
       const dashoffset = C*(1-startFrac);
-      return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${categoryColor(seg.block.label)}" stroke-width="${sw}"
+      return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${blockColorMap[seg.block.label] || categoryColor(seg.block.label)}" stroke-width="${sw}"
         stroke-dasharray="${arcLen} ${C-arcLen}" stroke-dashoffset="${dashoffset}"
         transform="rotate(-90 ${cx} ${cy})" class="dt-ring-seg" data-block-id="${seg.block.id}">
         <title>${escapeHtml(seg.block.label)} (${seg.block.start} à ${seg.block.end})</title>
@@ -1659,9 +1694,10 @@ export function initJamsPlansApp() {
         : '<p class="muted" style="font-size:13px;">Aucune période sélectionnée. Créez-en une avec « + Nouvelle période ».</p>';
       return;
     }
+    const blockColorMap = buildDayBlockColorMap(blocks);
     const blocksHtml = blocks.map(b=>`
       <div class="dt-legend-item" data-block-id="${b.id}">
-        <span class="dt-swatch" style="background:${categoryColor(b.label)};"></span>
+        <span class="dt-swatch" style="background:${blockColorMap[b.label] || categoryColor(b.label)};"></span>
         <span>${escapeHtml(b.label)}</span>
         <span class="mono muted">${b.start}–${b.end}</span>
         <span style="display:flex; gap:8px; margin-left:auto;">
@@ -1727,9 +1763,11 @@ export function initJamsPlansApp() {
     const datedTemplates = state.dayTemplates.filter(t=>t.period_start && t.period_end);
     wrap.innerHTML = datedTemplates.map(t=>{
       const rangeText = formatDateRangeFr(t.period_start, t.period_end);
+      const weekdaysText = formatWeekdaysFr(t.weekdays);
+      const detailText = weekdaysText ? `${rangeText} · ${weekdaysText}` : rangeText;
       const active = t.id === state.activeDayTemplateId ? " active" : "";
-      return `<button type="button" class="pill${active}" data-tpl-id="${t.id}">${escapeHtml(t.name)} <span class="muted" style="font-size:10.5px;">(${rangeText})</span></button>`;
-    }).join("") + `<button type="button" id="new-period-btn" class="pill">+ Nouvelle période</button>`;
+      return `<button type="button" class="pill${active}" data-tpl-id="${t.id}">${escapeHtml(t.name)} <span class="muted" style="font-size:10.5px;">(${detailText})</span></button>`;
+    }).join("") + `<button type="button" id="new-period-btn" class="pill pill-new">+ Nouvelle période</button>`;
 
     wrap.querySelectorAll("[data-tpl-id]").forEach(btn=>{
       btn.addEventListener("click", ()=>{
@@ -1816,13 +1854,15 @@ export function initJamsPlansApp() {
       showToast("Renseignez une date de début et de fin pour la période.", "error");
       return;
     }
-    const tpl = { id: nextId(), name, period_start: start, period_end: end, blocks: [] };
+    const weekdays = Array.from(document.querySelectorAll("#np-weekdays input[type=checkbox]:checked")).map(cb=>parseInt(cb.value, 10));
+    const tpl = { id: nextId(), name, period_start: start, period_end: end, weekdays, blocks: [] };
     state.dayTemplates.push(tpl);
     state.activeDayTemplateId = tpl.id;
     await saveDayTemplates();
     document.getElementById("np-name").value = "";
     document.getElementById("np-start").value = "";
     document.getElementById("np-end").value = "";
+    document.querySelectorAll("#np-weekdays input[type=checkbox]").forEach(cb=>{ cb.checked = false; });
     document.getElementById("new-period-form").style.display = "none";
     renderDayTemplate();
   });
