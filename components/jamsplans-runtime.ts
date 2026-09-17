@@ -88,15 +88,16 @@ export function initJamsPlansApp() {
     },
     async upsertDailyLog(userId, payload, existingId){
       // Si on connaît déjà l'id du log existant (rechargé en mémoire), on met
-      // à jour directement par id : c'est fiable dans tous les cas.
+      // à jour directement par id : c'est fiable dans tous les cas, sans
+      // dépendre d'un ON CONFLICT.
       // Sinon (premier enregistrement du jour pour cette tâche), on upsert en
-      // ciblant l'un des deux index uniques partiels (routine OU tâche
-      // d'agenda) — un simple "unique(user_id, routine_id, agenda_task_id,
-      // log_date)" ne fonctionne pas ici : en SQL, deux valeurs NULL ne sont
-      // jamais considérées égales, donc cette contrainte ne détectait jamais
-      // de conflit pour les tâches d'agenda (routine_id toujours NULL), et
-      // insérait une nouvelle ligne à chaque enregistrement au lieu de mettre
-      // à jour la précédente (c'était la cause de l'erreur d'enregistrement).
+      // ciblant la contrainte "unique nulls not distinct" côté base (voir
+      // schema.sql) : ATTENTION, ne pas cibler ici deux index uniques
+      // PARTIELS séparés (routine / agenda_task) — Postgres refuse alors
+      // l'upsert avec "no unique or exclusion constraint matching the ON
+      // CONFLICT specification" (essayé, et ça cassait TOUS les
+      // enregistrements). Une seule contrainte non partielle, une seule
+      // liste de colonnes ici : les deux doivent rester en phase.
       if (existingId){
         const { data, error } = await supabaseClient.from("daily_logs")
           .update({ ...payload, user_id: userId })
@@ -105,9 +106,8 @@ export function initJamsPlansApp() {
         if (error) throw error;
         return data;
       }
-      const conflictTarget = payload.routine_id ? "user_id,routine_id,log_date" : "user_id,agenda_task_id,log_date";
       const { data, error } = await supabaseClient.from("daily_logs")
-        .upsert({ ...payload, user_id: userId }, { onConflict: conflictTarget })
+        .upsert({ ...payload, user_id: userId }, { onConflict: "user_id,routine_id,agenda_task_id,log_date" })
         .select().single();
       if (error) throw error;
       return data;
@@ -924,14 +924,8 @@ export function initJamsPlansApp() {
         showToast("Un créneau de plus d'1h ne peut pas être ajouté directement à la Journée type : ouvrez le panneau « Journée type » dans Check-liste pour créer ou modifier ce bloc.", "error");
         return;
       }
-      // Même règle que pour les blocs de la journée type : pas de chevauchement
-      // avec un créneau déjà posé — sauf pour les petites tâches sans horaire,
-      // qui ne passent jamais par cette vérification.
-      const overlapping = findOverlappingBlock(planningStart, planningEnd, null);
-      if (overlapping){
-        showToast(`Ce créneau chevauche "${overlapping.label}" (${overlapping.start}–${overlapping.end}) dans la Journée type.`, "error");
-        return;
-      }
+      // Le chevauchement entre créneaux est volontairement autorisé (ex :
+      // lire pendant un trajet) : pas de vérification ici.
     }
 
     const draft = {
@@ -1546,24 +1540,44 @@ export function initJamsPlansApp() {
   // L'anneau se remplit visuellement à mesure que des heures sont bloquées ;
   // les trous restés couleur neutre = temps non planifié. Purement visuel :
   // pour modifier ou supprimer un bloc, on passe par les boutons de la légende.
+  // Prières du jour, superposées à TOUTES les journées type (quelle que soit
+  // la période affichée) dès que "Musulman" est coché dans Profil — lecture
+  // seule ici (pas de Modifier/Supprimer, pas comptées dans les heures
+  // bloquées) : elles vivent dans Profil/Check-liste, pas dans les blocs
+  // enregistrés de la journée type.
+  function getTodaysPrayerPseudoBlocks(){
+    if (!state.prayerEnabled) return [];
+    const today = todayISO();
+    return state.agendaTasks
+      .filter(t=>t.start_date===today && (t.label||"").startsWith(PRAYER_LABEL_PREFIX) && t.planning_start && t.planning_end)
+      .map(t=>({ id: "prayer-"+t.id, start: t.planning_start, end: t.planning_end, label: t.label }));
+  }
+
+  function blocksToRingSegments(list){
+    const segs = [];
+    list.forEach(block=>{
+      const startMin = timeToMinutes(block.start);
+      const endMin = timeToMinutes(block.end);
+      if (endMin > startMin){
+        segs.push({ block, startMin, lenMin: endMin - startMin });
+      } else {
+        // Le bloc chevauche minuit (ex: 23:00 -> 08:00) -> deux segments
+        segs.push({ block, startMin, lenMin: 1440 - startMin });
+        segs.push({ block, startMin: 0, lenMin: endMin });
+      }
+    });
+    return segs;
+  }
+
   function renderDayTemplateRing(){
     const wrap = document.getElementById("day-template-ring");
     const size = 260, cx = 130, cy = 130, r = 88, sw = 20;
     const C = 2 * Math.PI * r;
     const blocks = getActiveTemplate().blocks;
+    const prayerBlocks = getTodaysPrayerPseudoBlocks();
 
-    const segments = [];
-    blocks.forEach(block=>{
-      const startMin = timeToMinutes(block.start);
-      const endMin = timeToMinutes(block.end);
-      if (endMin > startMin){
-        segments.push({ block, startMin, lenMin: endMin - startMin });
-      } else {
-        // Le bloc chevauche minuit (ex: 23:00 -> 08:00) -> deux segments
-        segments.push({ block, startMin, lenMin: 1440 - startMin });
-        segments.push({ block, startMin: 0, lenMin: endMin });
-      }
-    });
+    const segments = blocksToRingSegments(blocks);
+    const prayerSegments = blocksToRingSegments(prayerBlocks);
 
     const totalBlockedMin = segments.reduce((s,seg)=>s+seg.lenMin, 0);
     const totalHours = Math.round((totalBlockedMin/60)*10)/10;
@@ -1576,6 +1590,24 @@ export function initJamsPlansApp() {
         stroke-dasharray="${arcLen} ${C-arcLen}" stroke-dashoffset="${dashoffset}"
         transform="rotate(-90 ${cx} ${cy})" class="dt-ring-seg" data-block-id="${seg.block.id}">
         <title>${escapeHtml(seg.block.label)} (${seg.block.start} à ${seg.block.end})</title>
+      </circle>`;
+    }).join("");
+
+    // Anneau intérieur fin, dédié aux prières : superposition purement
+    // visuelle, jamais mélangée aux blocs réels de la journée type.
+    const rPrayer = r - sw/2 - 8, swPrayer = 8;
+    const CPrayer = 2 * Math.PI * rPrayer;
+    const prayerRingBase = prayerBlocks.length
+      ? `<circle cx="${cx}" cy="${cy}" r="${rPrayer}" fill="none" stroke="var(--empty)" stroke-width="${swPrayer}" />`
+      : "";
+    const prayerSegmentsHtml = prayerSegments.map(seg=>{
+      const startFrac = seg.startMin/1440;
+      const arcLen = (seg.lenMin/1440)*CPrayer;
+      const dashoffset = CPrayer*(1-startFrac);
+      return `<circle cx="${cx}" cy="${cy}" r="${rPrayer}" fill="none" stroke="var(--violet)" stroke-width="${swPrayer}"
+        stroke-dasharray="${arcLen} ${CPrayer-arcLen}" stroke-dashoffset="${dashoffset}"
+        transform="rotate(-90 ${cx} ${cy})" class="dt-ring-seg-prayer">
+        <title>${escapeHtml(seg.block.label)} (${seg.block.start})</title>
       </circle>`;
     }).join("");
 
@@ -1597,6 +1629,8 @@ export function initJamsPlansApp() {
       <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
         <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--empty)" stroke-width="${sw}" />
         ${segmentsHtml}
+        ${prayerRingBase}
+        ${prayerSegmentsHtml}
         ${ticksHtml}
         <text x="${cx}" y="${cy-4}" text-anchor="middle" font-size="20" font-family="'IBM Plex Mono',monospace" fill="var(--ink)">${totalHours}h</text>
         <text x="${cx}" y="${cy+16}" text-anchor="middle" font-size="10" fill="var(--muted)">bloquées / 24h</text>
@@ -1627,11 +1661,12 @@ export function initJamsPlansApp() {
   function renderDayTemplateLegend(){
     const legend = document.getElementById("day-template-legend");
     const blocks = [...getActiveTemplate().blocks].sort((a,b)=>timeToMinutes(a.start)-timeToMinutes(b.start));
-    if (blocks.length === 0){
+    const prayerBlocks = [...getTodaysPrayerPseudoBlocks()].sort((a,b)=>timeToMinutes(a.start)-timeToMinutes(b.start));
+    if (blocks.length === 0 && prayerBlocks.length === 0){
       legend.innerHTML = '<p class="muted" style="font-size:13px;">Aucune plage définie pour cette période.</p>';
       return;
     }
-    legend.innerHTML = blocks.map(b=>`
+    const blocksHtml = blocks.map(b=>`
       <div class="dt-legend-item" data-block-id="${b.id}">
         <span class="dt-swatch" style="background:${categoryColor(b.label)};"></span>
         <span>${escapeHtml(b.label)}</span>
@@ -1642,6 +1677,16 @@ export function initJamsPlansApp() {
         </span>
       </div>
     `).join("");
+    // Prières du jour : lecture seule, pas de Modifier/Supprimer (elles se
+    // gèrent depuis Profil), affichées avec la couleur de l'anneau intérieur.
+    const prayerHtml = prayerBlocks.map(b=>`
+      <div class="dt-legend-item">
+        <span class="dt-swatch" style="background:var(--violet);"></span>
+        <span>${escapeHtml(b.label)}</span>
+        <span class="mono muted">${b.start}–${b.end}</span>
+      </div>
+    `).join("");
+    legend.innerHTML = blocksHtml + prayerHtml;
 
     legend.querySelectorAll(".dt-edit-btn").forEach(btn=>{
       btn.addEventListener("click", ()=>{
@@ -1719,23 +1764,37 @@ export function initJamsPlansApp() {
     renderDayTemplate();
   }
 
-  // Le résumé du jour et la check-liste concernent toujours "aujourd'hui" ;
-  // on les masque tant que "Consulter un jour" est ouvert, pour ne pas
-  // mélanger les deux dans le même écran.
+  // Trois vues mutuellement exclusives dans l'onglet du soir : Journée type,
+  // Check-liste (résumé + liste, la vue par défaut) et Consulter un jour.
+  // Un seul bouton "actif" (rempli) à la fois, les deux autres en "secondary"
+  // (contour) — c'est ce retour visuel qui manquait auparavant.
   function syncTodayViewsVisibility(){
+    const templateOpen = document.getElementById("day-template-panel").style.display === "block";
     const consultOpen = document.getElementById("day-consult-panel").style.display === "block";
-    document.getElementById("checkin-summary").style.display = consultOpen ? "none" : "block";
-    document.getElementById("checkin-list").style.display = consultOpen ? "none" : "block";
+    const checkinOpen = !templateOpen && !consultOpen;
+    document.getElementById("checkin-summary").style.display = checkinOpen ? "block" : "none";
+    document.getElementById("checkin-list").style.display = checkinOpen ? "block" : "none";
+
+    const setActive = (id, active)=>{
+      const btn = document.getElementById(id);
+      if (!btn) return;
+      btn.classList.toggle("secondary", !active);
+    };
+    setActive("day-template-toggle", templateOpen);
+    setActive("checkin-view-toggle", checkinOpen);
+    setActive("day-consult-toggle", consultOpen);
   }
 
   document.getElementById("day-template-toggle").addEventListener("click", ()=>{
-    const panel = document.getElementById("day-template-panel");
-    const isHidden = panel.style.display === "none" || !panel.style.display;
-    panel.style.display = isHidden ? "block" : "none";
-    if (isHidden){
-      document.getElementById("day-consult-panel").style.display = "none";
-      renderDayTemplate();
-    }
+    document.getElementById("day-template-panel").style.display = "block";
+    document.getElementById("day-consult-panel").style.display = "none";
+    renderDayTemplate();
+    syncTodayViewsVisibility();
+  });
+
+  document.getElementById("checkin-view-toggle").addEventListener("click", ()=>{
+    document.getElementById("day-template-panel").style.display = "none";
+    document.getElementById("day-consult-panel").style.display = "none";
     syncTodayViewsVisibility();
   });
 
@@ -1762,11 +1821,8 @@ export function initJamsPlansApp() {
     const label = document.getElementById("dt-label").value.trim();
     if (!start || !end || !label) return;
 
-    const overlapping = findOverlappingBlock(start, end, editingDayTemplateBlockId);
-    if (overlapping){
-      showToast(`Ce créneau chevauche "${overlapping.label}" (${overlapping.start}–${overlapping.end}).`, "error");
-      return;
-    }
+    // Le chevauchement entre créneaux est volontairement autorisé (ex : lire
+    // pendant un trajet) : pas de vérification de chevauchement ici.
 
     if (editingDayTemplateBlockId){
       const block = getActiveTemplate().blocks.find(b=>b.id===editingDayTemplateBlockId);
@@ -1922,15 +1978,11 @@ export function initJamsPlansApp() {
   }
 
   document.getElementById("day-consult-toggle").addEventListener("click", ()=>{
-    const panel = document.getElementById("day-consult-panel");
-    const isHidden = panel.style.display === "none" || !panel.style.display;
-    panel.style.display = isHidden ? "block" : "none";
-    if (isHidden){
-      document.getElementById("day-template-panel").style.display = "none";
-      const dateInput = document.getElementById("day-consult-date");
-      if (!dateInput.value) dateInput.value = todayISO();
-      renderDayConsult(dateInput.value);
-    }
+    document.getElementById("day-consult-panel").style.display = "block";
+    document.getElementById("day-template-panel").style.display = "none";
+    const dateInput = document.getElementById("day-consult-date");
+    if (!dateInput.value) dateInput.value = todayISO();
+    renderDayConsult(dateInput.value);
     syncTodayViewsVisibility();
   });
 

@@ -105,10 +105,10 @@ create table if not exists public.daily_logs (
     (routine_id is not null and agenda_task_id is null) or
     (routine_id is null and agenda_task_id is not null)
   )
-  -- Pas d'unique(...) global ici : NULL != NULL en SQL, donc une contrainte
-  -- unique portant à la fois sur routine_id et agenda_task_id ne détecte
-  -- jamais de conflit (l'un des deux est toujours NULL). Voir les deux index
-  -- uniques partiels créés juste après la table.
+  -- Pas d'unique(...) ici : voir la contrainte "unique nulls not distinct"
+  -- ajoutée juste après la table (NULL != NULL par défaut en SQL, donc un
+  -- unique(...) classique portant sur routine_id/agenda_task_id ne détecte
+  -- jamais de conflit puisque l'un des deux est toujours NULL).
 );
 
 comment on table public.daily_logs is 'Check-in quotidien : statut de la tâche et heures réellement effectuées';
@@ -121,12 +121,23 @@ alter table public.daily_logs add column if not exists excused_reason text;
 -- égales, donc cette contrainte ne détectait JAMAIS de conflit pour les
 -- tâches d'agenda (routine_id toujours NULL pour elles) — chaque
 -- enregistrement du soir créait une nouvelle ligne au lieu de mettre à jour
--- la précédente. On la remplace par deux index uniques partiels, un par type
--- de source (routine OU tâche d'agenda), qui fonctionnent correctement avec
--- des colonnes NULL.
+-- la précédente.
+--
+-- Première tentative (deux index uniques partiels) incorrecte : PostgreSQL
+-- ne peut cibler un index unique PARTIEL depuis ON CONFLICT que si la clause
+-- répète exactement son "where", ce que l'upsert de Supabase ne permet pas
+-- de faire — résultat : "there is no unique or exclusion constraint
+-- matching the ON CONFLICT specification" sur CHAQUE enregistrement. On
+-- supprime ces deux index et on les remplace par UNE seule contrainte
+-- "unique nulls not distinct" (PostgreSQL 15+), qui traite deux NULL comme
+-- égaux uniquement pour cette contrainte : exactement ce qu'il faut ici, et
+-- compatible avec l'onConflict d'origine (une seule liste de colonnes).
+drop index if exists public.daily_logs_routine_unique;
+drop index if exists public.daily_logs_agenda_unique;
 alter table public.daily_logs drop constraint if exists daily_logs_user_id_routine_id_agenda_task_id_log_date_key;
-create unique index if not exists daily_logs_routine_unique on public.daily_logs(user_id, routine_id, log_date) where routine_id is not null;
-create unique index if not exists daily_logs_agenda_unique on public.daily_logs(user_id, agenda_task_id, log_date) where agenda_task_id is not null;
+alter table public.daily_logs drop constraint if exists daily_logs_unique_nulls_not_distinct;
+alter table public.daily_logs add constraint daily_logs_unique_nulls_not_distinct
+  unique nulls not distinct (user_id, routine_id, agenda_task_id, log_date);
 
 -- Si une tâche d'agenda est supprimée (ex: resynchronisation des prières, ou
 -- suppression manuelle depuis l'onglet Agenda) alors qu'elle a déjà un
