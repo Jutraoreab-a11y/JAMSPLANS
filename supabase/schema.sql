@@ -104,14 +104,40 @@ create table if not exists public.daily_logs (
   constraint daily_logs_one_source check (
     (routine_id is not null and agenda_task_id is null) or
     (routine_id is null and agenda_task_id is not null)
-  ),
-  unique (user_id, routine_id, agenda_task_id, log_date)
+  )
+  -- Pas d'unique(...) global ici : NULL != NULL en SQL, donc une contrainte
+  -- unique portant à la fois sur routine_id et agenda_task_id ne détecte
+  -- jamais de conflit (l'un des deux est toujours NULL). Voir les deux index
+  -- uniques partiels créés juste après la table.
 );
 
 comment on table public.daily_logs is 'Check-in quotidien : statut de la tâche et heures réellement effectuées';
 
 -- Idempotent : ajoute la colonne sur une base déjà créée avant son introduction.
 alter table public.daily_logs add column if not exists excused_reason text;
+
+-- Corrige la contrainte "unique (user_id, routine_id, agenda_task_id,
+-- log_date)" ci-dessus : en SQL, deux valeurs NULL ne sont jamais considérées
+-- égales, donc cette contrainte ne détectait JAMAIS de conflit pour les
+-- tâches d'agenda (routine_id toujours NULL pour elles) — chaque
+-- enregistrement du soir créait une nouvelle ligne au lieu de mettre à jour
+-- la précédente. On la remplace par deux index uniques partiels, un par type
+-- de source (routine OU tâche d'agenda), qui fonctionnent correctement avec
+-- des colonnes NULL.
+alter table public.daily_logs drop constraint if exists daily_logs_user_id_routine_id_agenda_task_id_log_date_key;
+create unique index if not exists daily_logs_routine_unique on public.daily_logs(user_id, routine_id, log_date) where routine_id is not null;
+create unique index if not exists daily_logs_agenda_unique on public.daily_logs(user_id, agenda_task_id, log_date) where agenda_task_id is not null;
+
+-- Si une tâche d'agenda est supprimée (ex: resynchronisation des prières, ou
+-- suppression manuelle depuis l'onglet Agenda) alors qu'elle a déjà un
+-- check-in enregistré, l'ancienne règle "on delete set null" mettait
+-- agenda_task_id à NULL sur ce log — ce qui violait aussitôt la contrainte
+-- daily_logs_one_source (plus aucune source renseignée) et faisait échouer
+-- la suppression avec une erreur. On supprime maintenant proprement le log
+-- devenu obsolète en même temps que sa tâche.
+alter table public.daily_logs drop constraint if exists daily_logs_agenda_task_id_fkey;
+alter table public.daily_logs add constraint daily_logs_agenda_task_id_fkey
+  foreign key (agenda_task_id) references public.agenda_tasks(id) on delete cascade;
 
 -- ---------------------------------------------------------
 -- TABLE: profiles
@@ -154,6 +180,10 @@ alter table public.profiles add column if not exists reminder_channel_sms boolea
 -- menu Profil, ex: 'Africa/Abidjan') servant à calculer les 5 horaires du
 -- jour via l'API Aladhan ; NULL/vide désactive la fonctionnalité.
 alter table public.profiles add column if not exists prayer_city text;
+-- Bouton "Musulman" du Profil : active/désactive l'affichage des 5 prières
+-- quotidiennes (Check-liste, Profil). La ville reste utilisée pour la météo
+-- même si ce bouton est décoché.
+alter table public.profiles add column if not exists prayer_enabled boolean not null default false;
 
 -- Crée automatiquement une ligne profiles à l'inscription (signup)
 create or replace function public.handle_new_user()

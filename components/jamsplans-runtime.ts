@@ -86,9 +86,28 @@ export function initJamsPlansApp() {
       const { error } = await supabaseClient.from("agenda_tasks").delete().eq("id", id);
       if (error) throw error;
     },
-    async upsertDailyLog(userId, payload){
+    async upsertDailyLog(userId, payload, existingId){
+      // Si on connaît déjà l'id du log existant (rechargé en mémoire), on met
+      // à jour directement par id : c'est fiable dans tous les cas.
+      // Sinon (premier enregistrement du jour pour cette tâche), on upsert en
+      // ciblant l'un des deux index uniques partiels (routine OU tâche
+      // d'agenda) — un simple "unique(user_id, routine_id, agenda_task_id,
+      // log_date)" ne fonctionne pas ici : en SQL, deux valeurs NULL ne sont
+      // jamais considérées égales, donc cette contrainte ne détectait jamais
+      // de conflit pour les tâches d'agenda (routine_id toujours NULL), et
+      // insérait une nouvelle ligne à chaque enregistrement au lieu de mettre
+      // à jour la précédente (c'était la cause de l'erreur d'enregistrement).
+      if (existingId){
+        const { data, error } = await supabaseClient.from("daily_logs")
+          .update({ ...payload, user_id: userId })
+          .eq("id", existingId)
+          .select().single();
+        if (error) throw error;
+        return data;
+      }
+      const conflictTarget = payload.routine_id ? "user_id,routine_id,log_date" : "user_id,agenda_task_id,log_date";
       const { data, error } = await supabaseClient.from("daily_logs")
-        .upsert({ ...payload, user_id: userId }, { onConflict: "user_id,routine_id,agenda_task_id,log_date" })
+        .upsert({ ...payload, user_id: userId }, { onConflict: conflictTarget })
         .select().single();
       if (error) throw error;
       return data;
@@ -340,23 +359,22 @@ export function initJamsPlansApp() {
   // les 5 tâches du jour existent déjà, ne refait pas l'appel API. Appelée
   // au chargement de l'app et juste après l'enregistrement d'une ville.
   async function syncPrayerTimesForToday(){
-    if (!state.prayerCity) return;
+    if (!state.prayerEnabled || !state.prayerCity) return;
     const today = todayISO();
     const already = state.agendaTasks.filter(t=>t.start_date===today && (t.label||"").startsWith(PRAYER_LABEL_PREFIX));
-    if (already.length >= PRAYER_NAMES.length) { renderPrayerTimesToday(); return; }
+    const alreadyNames = already.map(t=>t.label.slice(PRAYER_LABEL_PREFIX.length));
+    const missingNames = PRAYER_NAMES.filter(n=>!alreadyNames.includes(n));
+    if (missingNames.length === 0) { renderPrayerTimesToday(); return; }
 
     const timings = await fetchPrayerTimings(state.prayerCity, today);
     if (!timings) return;
 
-    // Retire d'éventuelles entrées partielles/périmées du jour avant de
-    // réinsérer les 5 fraîches (changement de ville, appel précédent
-    // incomplet...).
-    for (const t of already){
-      if (SUPABASE_CONFIGURED){ try { await db.deleteAgendaTask(t.id); } catch(e){ /* tant pis, on continue */ } }
-      state.agendaTasks = state.agendaTasks.filter(x=>x.id!==t.id);
-    }
-
-    for (const name of PRAYER_NAMES){
+    // Important : on ne supprime jamais une prière déjà créée aujourd'hui —
+    // l'utilisateur a pu déjà cocher son statut dans la Check-liste, et la
+    // supprimer casserait ce check-in (erreur d'enregistrement). On complète
+    // seulement les prières manquantes (premier lancement du jour, ou appel
+    // précédent incomplet).
+    for (const name of missingNames){
       const start = timings[name];
       if (!start) continue;
       const draft = {
@@ -438,6 +456,7 @@ export function initJamsPlansApp() {
       if (!cur) return null;
       return {
         icon: weatherIconForCode(cur.weather_code),
+        tempC: Math.round(cur.temperature_2m),
         sentence: weatherAdviceSentence(cur.weather_code, cur.temperature_2m, cur.precipitation, cur.wind_speed_10m),
       };
     } catch(e){ return null; }
@@ -455,7 +474,7 @@ export function initJamsPlansApp() {
     const advice = await fetchWeatherAdvice(state.prayerCity);
     if (advice){
       weatherTipDate = today;
-      box.innerHTML = `<span style="font-size:18px; vertical-align:middle;">${advice.icon}</span> ${escapeHtml(advice.sentence)}`;
+      box.innerHTML = `<span style="font-size:18px; vertical-align:middle;">${advice.icon}</span> <strong class="mono">${advice.tempC}°C</strong> — ${escapeHtml(advice.sentence)}`;
     }
   }
 
@@ -463,6 +482,7 @@ export function initJamsPlansApp() {
   function renderPrayerTimesToday(){
     const box = document.getElementById("prayer-times-today");
     if (!box) return;
+    if (!state.prayerEnabled){ box.textContent = ""; return; }
     if (!state.prayerCity){ box.textContent = ""; return; }
     const today = todayISO();
     const todays = state.agendaTasks.filter(t=>t.start_date===today && (t.label||"").startsWith(PRAYER_LABEL_PREFIX));
@@ -573,6 +593,7 @@ export function initJamsPlansApp() {
     dashboardMonth: new Date().getMonth(), // 0-11
     reminder: { enabled: false, time: "20:00", timezone: "Europe/Paris", webhookUrl: JAMSPLANS_MAKE_WEBHOOK_URL, channelEmail: true, channelSms: false },
     prayerCity: "",
+    prayerEnabled: false,
     weeklyLimits: SUPABASE_CONFIGURED ? {} : { "Étude": 15, "Travail": 40, "Sport": 8 },
     // Plusieurs journées type possibles, chacune valable sur une période
     // (ou "toujours" si period_start/period_end sont vides). Celle qui
@@ -959,13 +980,17 @@ export function initJamsPlansApp() {
     }
 
     const list = document.getElementById("agenda-list");
-    if (state.agendaTasks.length === 0){
+    // Les prières sont gérées automatiquement (ville + bouton "Musulman" dans
+    // Profil) et ne doivent jamais encombrer l'onglet Agenda — elles restent
+    // visibles uniquement dans la Check-liste et le résumé du Profil.
+    const visibleAgendaTasks = state.agendaTasks.filter(t=>!(t.label||"").startsWith(PRAYER_LABEL_PREFIX));
+    if (visibleAgendaTasks.length === 0){
       list.innerHTML = emptyStateHtml("Aucune tâche pour l'instant. Ajoutez-en une ci-dessus.");
       return;
     }
 
     const byDate = {};
-    state.agendaTasks.forEach(t=>{ (byDate[t.start_date] = byDate[t.start_date] || []).push(t); });
+    visibleAgendaTasks.forEach(t=>{ (byDate[t.start_date] = byDate[t.start_date] || []).push(t); });
     const dates = Object.keys(byDate).sort();
 
     list.innerHTML = dates.map(date=>{
@@ -1987,7 +2012,12 @@ export function initJamsPlansApp() {
 
     // Tâches saisies dans Agenda dont la plage (début -> fin) inclut
     // aujourd'hui — elles remontent automatiquement ici, sans double saisie.
-    const todaysAgendaTasks = state.agendaTasks.filter(t=> date >= t.start_date && date <= t.end_date).map(t=>({
+    const todaysAgendaTasks = state.agendaTasks.filter(t=>{
+      if (date < t.start_date || date > t.end_date) return false;
+      const isPrayerTask = (t.label||"").startsWith(PRAYER_LABEL_PREFIX);
+      if (isPrayerTask && !state.prayerEnabled) return false;
+      return true;
+    }).map(t=>({
       key: "agenda-"+t.id, label: t.label, planned_hours: t.planned_hours,
       objective_id: t.objective_id || null, routine_id: null, agenda_task_id: t.id,
       is_priority: t.is_priority, planning_start: t.planning_start || null,
@@ -2010,6 +2040,7 @@ export function initJamsPlansApp() {
       ));
       const cat = item.objective_id ? categoryOfObjective(item.objective_id) : "Agenda";
       const isPrayer = (item.label||"").startsWith(PRAYER_LABEL_PREFIX);
+      const prayerName = isPrayer ? item.label.slice(PRAYER_LABEL_PREFIX.length) : null;
       // Pour une prière, on affiche l'heure juste devant le nom : "🕌 Fajr : 06:30".
       const displayLabel = (isPrayer && item.planning_start) ? `${item.label} : ${item.planning_start}` : item.label;
       const card = document.createElement("div");
@@ -2017,20 +2048,22 @@ export function initJamsPlansApp() {
       card.style.marginBottom = "12px";
       card.innerHTML = `
         <div style="display:flex; justify-content:space-between; align-items:center;">
-          <strong style="font-size:14px;">${escapeHtml(displayLabel)}<span class="cat-badge" style="background:${categoryColor(cat)};">${escapeHtml(cat)}</span>${item.is_priority ? '<span class="priority-badge">Prioritaire</span>' : ""}</strong>
+          <strong style="font-size:14px;">${isPrayer
+            ? `<span class="prayer-name-open" style="cursor:pointer; text-decoration:underline dotted;" title="Voir le calendrier de cette prière">${escapeHtml(displayLabel)}</span>`
+            : escapeHtml(displayLabel)}<span class="cat-badge" style="background:${categoryColor(cat)};">${escapeHtml(cat)}</span>${item.is_priority ? '<span class="priority-badge">Prioritaire</span>' : ""}</strong>
           ${isPrayer ? "" : `<span class="mono muted" style="font-size:12px;">${item.planned_hours}h prévues</span>`}
         </div>
         <div class="status-row">
-          <button class="status-btn" data-status="done">Fait</button>
-          <button class="status-btn" data-status="partial">Partiel</button>
-          <button class="status-btn" data-status="not_done">Non fait</button>
+          <button class="status-btn" data-status="done">${isPrayer ? "Fait à l'heure" : "Fait"}</button>
+          <button class="status-btn" data-status="partial">Fait</button>
+          <button class="status-btn" data-status="not_done">${isPrayer ? "Pas fait" : "Non fait"}</button>
         </div>
         <div style="margin-top:10px; display:flex; align-items:center; gap:8px; ${isPrayer ? "display:none;" : ""}">
           <label class="muted" style="font-size:12px;">Heures réalisées</label>
           <input type="number" min="0" step="0.25" class="actual-hours mono" style="width:80px;" value="${existing ? existing.actual_hours : item.planned_hours}" />
           <span class="muted" style="font-size:12px;">/ ${item.planned_hours}h</span>
         </div>
-        <div class="excuse-block" style="margin-top:8px;">
+        <div class="excuse-block" style="margin-top:8px; ${isPrayer ? "display:none;" : ""}">
           <label class="muted" style="font-size:12px;">Exception</label>
           <select class="excuse-select" style="width:auto; margin-left:6px;">
             <option value="">Aucune (jour normal)</option>
@@ -2042,6 +2075,10 @@ export function initJamsPlansApp() {
         </div>
         <button class="btn savebtn">Enregistrer</button>
       `;
+      if (isPrayer){
+        const nameEl = card.querySelector(".prayer-name-open");
+        if (nameEl) nameEl.addEventListener("click", ()=> openPrayerCalendar(prayerName));
+      }
       const excuseBlock = card.querySelector(".excuse-block");
       const excuseSelect = card.querySelector(".excuse-select");
       const excuseOtherInput = card.querySelector(".excuse-other-input");
@@ -2062,7 +2099,8 @@ export function initJamsPlansApp() {
       // tâche n'a pas été faite ou seulement partiellement — on la cache
       // sinon pour ne pas mélanger "fait" et "excusé".
       function updateExcuseVisibility(){
-        excuseBlock.style.display = (currentStatus === "not_done" || currentStatus === "partial") ? "block" : "none";
+        // Pas de section "Exception" pour les prières, quel que soit le statut.
+        excuseBlock.style.display = (!isPrayer && (currentStatus === "not_done" || currentStatus === "partial")) ? "block" : "none";
         if (excuseBlock.style.display === "none"){
           excuseSelect.value = "";
           excuseOtherInput.value = "";
@@ -2102,7 +2140,7 @@ export function initJamsPlansApp() {
 
         if (SUPABASE_CONFIGURED){
           try {
-            const saved = await db.upsertDailyLog(state.userId, draft);
+            const saved = await db.upsertDailyLog(state.userId, draft, existing ? existing.id : null);
             const savedIdx = state.dailyLogs.findIndex(l=>l.id===saved.id);
             if (savedIdx>=0) state.dailyLogs[savedIdx] = saved; else state.dailyLogs.push(saved);
           } catch(err){ showToast("Erreur lors de l'enregistrement : " + err.message, "error"); return; }
@@ -2121,6 +2159,82 @@ export function initJamsPlansApp() {
       list.appendChild(card);
     });
   }
+
+  // =========================================================
+  // CALENDRIER PAR PRIÈRE (modal ouvert au clic sur le nom d'une prière
+  // dans la Check-liste) — vert = priée à l'heure, bleu = priée (statut
+  // "Fait" mais pas "à l'heure"), orange = pas faite. Tout l'historique est
+  // déjà chargé en mémoire (state.agendaTasks / state.dailyLogs), donc pas
+  // de nouvel appel réseau.
+  // =========================================================
+  const PRAYER_CAL_COLOR_HEX = { green: "var(--green)", blue: "var(--blue)", orange: "var(--orange)" };
+  let prayerCalState = { name: null, year: new Date().getFullYear(), month: new Date().getMonth() };
+
+  function prayerColorForDate(prayerName, dateStr){
+    if (dateStr > todayISO()) return null; // jour futur : rien à afficher
+    const task = state.agendaTasks.find(t=>t.start_date===dateStr && t.label===PRAYER_LABEL_PREFIX+prayerName);
+    const log = task ? state.dailyLogs.find(l=>l.agenda_task_id===task.id) : null;
+    if (log && log.status === "done") return "green";
+    if (log && log.status === "partial") return "blue";
+    return "orange"; // pas de tâche générée, pas de check-in, ou "Pas fait"
+  }
+
+  function renderPrayerCalendarGrid(){
+    const { name, year, month } = prayerCalState;
+    const title = document.getElementById("prayer-cal-title");
+    if (title) title.textContent = name || "";
+    const monthLabel = document.getElementById("prayer-cal-month-label");
+    if (monthLabel) monthLabel.textContent = `${MONTH_NAMES[month]} ${year}`;
+    const weekdayHeader = document.getElementById("prayer-cal-weekday-header");
+    if (weekdayHeader) weekdayHeader.innerHTML = ["Lun","Mar","Mer","Jeu","Ven","Sam","Dim"].map(d=>`<span>${d}</span>`).join("");
+    const grid = document.getElementById("prayer-cal-grid");
+    if (!grid) return;
+    grid.innerHTML = "";
+    const firstOfMonth = new Date(year, month, 1);
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const leadingBlanks = (firstOfMonth.getDay() + 6) % 7; // lundi = début de semaine
+    for (let i=0; i<leadingBlanks; i++){
+      const blank = document.createElement("div");
+      blank.className = "cal-cell blank";
+      grid.appendChild(blank);
+    }
+    for (let day=1; day<=daysInMonth; day++){
+      const dateStr = `${year}-${String(month+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+      const color = prayerColorForDate(name, dateStr);
+      const cell = document.createElement("div");
+      cell.className = "cal-cell mono";
+      cell.style.background = color ? PRAYER_CAL_COLOR_HEX[color] : "var(--empty)";
+      cell.style.color = color ? "#fff" : "var(--muted)";
+      cell.title = dateStr;
+      cell.textContent = day;
+      grid.appendChild(cell);
+    }
+  }
+
+  function openPrayerCalendar(prayerName){
+    const today = new Date();
+    prayerCalState = { name: prayerName, year: today.getFullYear(), month: today.getMonth() };
+    renderPrayerCalendarGrid();
+    const overlay = document.getElementById("prayer-cal-overlay");
+    if (overlay) overlay.style.display = "flex";
+  }
+
+  document.getElementById("prayer-cal-close")?.addEventListener("click", ()=>{
+    document.getElementById("prayer-cal-overlay").style.display = "none";
+  });
+  document.getElementById("prayer-cal-overlay")?.addEventListener("click", (e)=>{
+    if (e.target.id === "prayer-cal-overlay") e.currentTarget.style.display = "none";
+  });
+  document.getElementById("prayer-cal-prev")?.addEventListener("click", ()=>{
+    prayerCalState.month -= 1;
+    if (prayerCalState.month < 0){ prayerCalState.month = 11; prayerCalState.year -= 1; }
+    renderPrayerCalendarGrid();
+  });
+  document.getElementById("prayer-cal-next")?.addEventListener("click", ()=>{
+    prayerCalState.month += 1;
+    if (prayerCalState.month > 11){ prayerCalState.month = 0; prayerCalState.year += 1; }
+    renderPrayerCalendarGrid();
+  });
 
   // =========================================================
   // ONGLET 3 : DASHBOARD
@@ -2438,6 +2552,8 @@ export function initJamsPlansApp() {
       });
     }
     if (prayerSelect) prayerSelect.value = state.prayerCity || "";
+    const prayerEnabledCheckbox = document.getElementById("prayer-enabled");
+    if (prayerEnabledCheckbox) prayerEnabledCheckbox.checked = !!state.prayerEnabled;
     renderPrayerTimesToday();
     renderWeeklyLimits();
   }
@@ -2446,16 +2562,20 @@ export function initJamsPlansApp() {
     const msg = document.getElementById("prayer-message");
     msg.classList.remove("error", "success");
     const cityValue = document.getElementById("prayer-city").value;
+    const enabledValue = !!document.getElementById("prayer-enabled")?.checked;
     state.prayerCity = cityValue;
+    state.prayerEnabled = enabledValue;
     if (SUPABASE_CONFIGURED){
-      try { await db.upsertProfile(state.userId, { prayer_city: cityValue || null }); }
+      try { await db.upsertProfile(state.userId, { prayer_city: cityValue || null, prayer_enabled: enabledValue }); }
       catch(err){ msg.textContent = "Erreur : " + err.message; msg.classList.add("error"); return; }
     }
-    msg.textContent = cityValue ? "Ville enregistrée, calcul des horaires du jour…" : "Horaires de prière désactivés.";
+    msg.textContent = !enabledValue ? "Prières désactivées : elles ne s'affichent plus."
+      : cityValue ? "Ville enregistrée, calcul des horaires du jour…"
+      : "Choisissez une ville pour activer les prières.";
     msg.classList.add("success");
     weatherTipDate = null; // la ville a changé : on redemande la météo
-    if (cityValue) { await syncPrayerTimesForToday(); renderWeatherTip(); }
-    else renderPrayerTimesToday();
+    if (enabledValue && cityValue) { await syncPrayerTimesForToday(); renderWeatherTip(); }
+    else { renderPrayerTimesToday(); renderCheckin(); renderAgenda(); if (cityValue) renderWeatherTip(); }
   });
 
   const profileForm = document.getElementById("profile-form");
@@ -2925,6 +3045,7 @@ export function initJamsPlansApp() {
         state.reminder.channelEmail = true;
         state.reminder.channelSms = false;
         state.prayerCity = loaded.profile.prayer_city || "";
+        state.prayerEnabled = !!loaded.profile.prayer_enabled;
         state.weeklyLimits = loaded.profile.weekly_limits || {};
         const loadedTemplates = loaded.profile.day_template;
         state.dayTemplates = (Array.isArray(loadedTemplates) && loadedTemplates.length > 0 && loadedTemplates[0].blocks)
