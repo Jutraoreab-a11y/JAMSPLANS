@@ -106,9 +106,13 @@
     border:1px solid var(--line); background:none; border-radius:999px;
     padding:5px 12px; font-size:12px; color:var(--muted); cursor:pointer; font-family:inherit;
   }
-  button.pill.active{border-color:var(--navy-btn); background:var(--navy-btn); color:#F5F7FC;}
-  button.pill.pill-new{border:1.5px solid var(--navy-btn); color:var(--navy-btn); font-weight:600;}
-  button.pill.pill-new.active{background:var(--navy-btn); color:#F5F7FC; border-color:var(--navy-btn);}
+  button.pill.active{border-color:var(--navy-btn); background:var(--navy-btn); color:#F5F7FC; font-weight:700;}
+  button.pill.pill-new{
+    background:#fff; color:#111; border:2px solid #fff; font-weight:700;
+    padding:11px 22px; font-size:15px; border-radius:10px; box-shadow:0 1px 3px rgba(0,0,0,.18);
+  }
+  button.pill.pill-new:hover{box-shadow:0 2px 7px rgba(0,0,0,.25);}
+  button.pill.pill-new.active{border-color:var(--navy-btn);}
 
   .dt-period-item{display:flex; align-items:center; gap:1px;}
   .dt-period-edit-btn, .dt-period-delete-btn{
@@ -117,6 +121,21 @@
   }
   .dt-period-edit-btn:hover{color:var(--navy-btn);}
   .dt-period-delete-btn:hover{color:var(--red);}
+
+  /* Jours de la semaine (formulaire "+ Nouvelle période") : des puces
+     cliquables plutôt que de simples cases à cocher discrètes — passives
+     (contour fin, texte gris) au repos, et grasses + colorées dès qu'on
+     les coche, pour un vrai retour visuel actif/passif. */
+  .np-weekdays{display:flex; gap:6px; flex-wrap:wrap; margin-top:4px;}
+  .np-day-chip{
+    display:flex; align-items:center; gap:4px; white-space:nowrap; cursor:pointer;
+    font-size:12px; color:var(--muted); border:1.5px solid var(--line); border-radius:999px;
+    padding:5px 11px; font-family:inherit; user-select:none;
+  }
+  .np-day-chip input{width:auto; margin:0;}
+  .np-day-chip:has(input:checked){
+    font-weight:700; color:var(--navy-btn); border-color:var(--navy-btn); background:rgba(44,78,140,.08);
+  }
 
   .obj-form{display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end;}
   .obj-form > div{display:flex; flex-direction:column; min-width:130px;}

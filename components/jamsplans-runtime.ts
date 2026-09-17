@@ -306,6 +306,15 @@ export function initJamsPlansApp() {
     if (start) return `depuis ${formatDateFr(start)}`;
     return "";
   }
+  // Même chose sans l'année, pour les périodes qui se répètent chaque année
+  // (seuls le jour et le mois comptent pour ces périodes-là).
+  function formatDateFrNoYear(dateStr){
+    const d = new Date(dateStr+"T00:00:00");
+    return `${String(d.getDate()).padStart(2,"0")} ${MONTH_ABBR_FR[d.getMonth()]}`;
+  }
+  function formatAnnualRangeFr(start, end){
+    return `${formatDateFrNoYear(start)} → ${formatDateFrNoYear(end)}`;
+  }
   // Jours de la semaine (convention JS Date#getDay() : 0=Dimanche..6=Samedi),
   // affichés dans l'ordre français habituel Lun -> Dim.
   const WEEKDAY_LABELS_FR = { 0:"Dim", 1:"Lun", 2:"Mar", 3:"Mer", 4:"Jeu", 5:"Ven", 6:"Sam" };
@@ -502,7 +511,7 @@ export function initJamsPlansApp() {
     const advice = await fetchWeatherAdvice(state.prayerCity);
     if (advice){
       weatherTipDate = today;
-      box.innerHTML = `<span style="font-size:18px; vertical-align:middle;">${advice.icon}</span> <strong class="mono">${advice.tempC}°C</strong> — ${escapeHtml(advice.sentence)}`;
+      box.innerHTML = `<span style="font-size:18px; vertical-align:middle;">${advice.icon}</span> <strong class="mono">${advice.tempC}°C</strong> ${escapeHtml(advice.sentence)}`;
     }
   }
 
@@ -1560,18 +1569,35 @@ export function initJamsPlansApp() {
     return state.dayTemplates.find(t=>t.id===state.activeDayTemplateId) || null;
   }
 
+  // Compare uniquement jour+mois (ignore l'année), pour les périodes qui se
+  // répètent chaque année — gère aussi les plages qui traversent le 31
+  // décembre (ex : 01 oct -> 31 mars).
+  function isDateInAnnualRange(dateStr, startStr, endStr){
+    const md = dateStr.slice(5);
+    const startMd = startStr.slice(5);
+    const endMd = endStr.slice(5);
+    if (startMd <= endMd) return md >= startMd && md <= endMd;
+    return md >= startMd || md <= endMd;
+  }
+
   // Retrouve la journée type applicable à une date donnée : celle dont la
   // période (début->fin) couvre cette date, ET dont la liste de jours de la
   // semaine (si renseignée) inclut le jour de cette date. Une période sans
   // jours cochés s'applique à tous les jours de sa plage de dates. Ça permet
   // par exemple une journée type "Semaine" (Lun-Ven) et une autre "Week-end"
-  // (Sam-Dim) actives sur la même plage de dates.
+  // (Sam-Dim) actives sur la même plage de dates. Une période marquée
+  // "se répète chaque année" (recurring_yearly) n'est comparée que sur le
+  // jour+mois, pour n'avoir à la saisir qu'une seule fois.
   function getTemplateForDate(dateStr){
     const dow = new Date(dateStr+"T00:00:00").getDay();
-    return state.dayTemplates.find(t=>
-      t.period_start && t.period_end && dateStr >= t.period_start && dateStr <= t.period_end &&
-      (!Array.isArray(t.weekdays) || t.weekdays.length === 0 || t.weekdays.includes(dow))
-    ) || null;
+    return state.dayTemplates.find(t=>{
+      if (!t.period_start || !t.period_end) return false;
+      const inRange = t.recurring_yearly
+        ? isDateInAnnualRange(dateStr, t.period_start, t.period_end)
+        : (dateStr >= t.period_start && dateStr <= t.period_end);
+      if (!inRange) return false;
+      return !Array.isArray(t.weekdays) || t.weekdays.length === 0 || t.weekdays.includes(dow);
+    }) || null;
   }
 
   // Anneau 24h : chaque bloc devient un segment coloré positionné par angle.
@@ -1783,6 +1809,7 @@ export function initJamsPlansApp() {
     document.getElementById("np-start").value = "";
     document.getElementById("np-end").value = "";
     document.querySelectorAll("#np-weekdays input[type=checkbox]").forEach(cb=>{ cb.checked = false; });
+    document.getElementById("np-recurring").checked = false;
     document.getElementById("np-submit-btn").textContent = "Créer la période";
     document.getElementById("np-cancel-edit-btn").style.display = "none";
   }
@@ -1797,7 +1824,9 @@ export function initJamsPlansApp() {
     const wrap = document.getElementById("day-template-periods");
     const datedTemplates = state.dayTemplates.filter(t=>t.period_start && t.period_end);
     wrap.innerHTML = datedTemplates.map(t=>{
-      const rangeText = formatDateRangeFr(t.period_start, t.period_end);
+      const rangeText = t.recurring_yearly
+        ? `${formatAnnualRangeFr(t.period_start, t.period_end)}, chaque année`
+        : formatDateRangeFr(t.period_start, t.period_end);
       const weekdaysText = formatWeekdaysFr(t.weekdays);
       const detailText = weekdaysText ? `${rangeText} · ${weekdaysText}` : rangeText;
       const active = t.id === state.activeDayTemplateId ? " active" : "";
@@ -1828,6 +1857,7 @@ export function initJamsPlansApp() {
         document.querySelectorAll("#np-weekdays input[type=checkbox]").forEach(cb=>{
           cb.checked = checkedDays.includes(parseInt(cb.value, 10));
         });
+        document.getElementById("np-recurring").checked = !!tpl.recurring_yearly;
         document.getElementById("np-submit-btn").textContent = "Enregistrer les modifications";
         document.getElementById("np-cancel-edit-btn").style.display = "inline-block";
         document.getElementById("new-period-form").style.display = "flex";
@@ -1940,6 +1970,7 @@ export function initJamsPlansApp() {
       return;
     }
     const weekdays = Array.from(document.querySelectorAll("#np-weekdays input[type=checkbox]:checked")).map(cb=>parseInt(cb.value, 10));
+    const recurringYearly = document.getElementById("np-recurring").checked;
     if (editingPeriodId){
       const tpl = state.dayTemplates.find(t=>t.id===editingPeriodId);
       if (tpl){
@@ -1947,9 +1978,10 @@ export function initJamsPlansApp() {
         tpl.period_start = start;
         tpl.period_end = end;
         tpl.weekdays = weekdays;
+        tpl.recurring_yearly = recurringYearly;
       }
     } else {
-      const tpl = { id: nextId(), name, period_start: start, period_end: end, weekdays, blocks: [] };
+      const tpl = { id: nextId(), name, period_start: start, period_end: end, weekdays, recurring_yearly: recurringYearly, blocks: [] };
       state.dayTemplates.push(tpl);
       state.activeDayTemplateId = tpl.id;
     }
