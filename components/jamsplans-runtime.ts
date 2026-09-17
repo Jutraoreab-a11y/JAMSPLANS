@@ -122,7 +122,7 @@ export function initJamsPlansApp() {
 
   // jsonb.history / current_year (snake_case en base) <-> currentYear / history (camelCase côté app)
   function mapObjectiveFromDb(row){
-    return { ...row, currentYear: row.current_year, history: row.history || [] };
+    return { ...row, currentYear: row.current_year, history: row.history || [], monthly_completions: row.monthly_completions || {} };
   }
   function mapObjectiveToDb(obj){
     return {
@@ -134,6 +134,8 @@ export function initJamsPlansApp() {
       achieved: obj.achieved,
       current_year: obj.currentYear,
       history: obj.history,
+      is_monthly: !!obj.is_monthly,
+      monthly_completions: obj.monthly_completions || {},
     };
   }
 
@@ -292,6 +294,14 @@ export function initJamsPlansApp() {
   const nextId = () => "id-" + (++uid);
 
   function todayISO(){ return new Date().toISOString().slice(0,10); }
+  // Vrai si dateStr est le dernier jour de son mois — sert à n'afficher les
+  // objectifs mensuels (cochés une fois par mois) que ce jour-là.
+  function isLastDayOfMonth(dateStr){
+    const d = new Date(dateStr+"T00:00:00");
+    const next = new Date(d);
+    next.setDate(d.getDate()+1);
+    return next.getMonth() !== d.getMonth();
+  }
 
   // Format d'affichage demandé : "02 janv. 2026" / plages "02 janv. 2026 → 06 mai 2027"
   const MONTH_ABBR_FR = ["janv.","févr.","mars","avr.","mai","juin","juil.","août","sept.","oct.","nov.","déc."];
@@ -777,12 +787,21 @@ export function initJamsPlansApp() {
     document.getElementById("obj-date-wrap").style.display = "";
     document.getElementById("obj-hours").value = "10";
     document.getElementById("obj-minutes").value = "0";
+    document.getElementById("obj-monthly").checked = false;
+    document.getElementById("obj-hours-wrap").style.display = "";
     document.getElementById("obj-category-custom").value = "";
     document.getElementById("obj-category-custom").style.display = "none";
     document.getElementById("obj-category").value = "Étude";
     document.getElementById("obj-submit-btn").textContent = "+ Ajouter";
     document.getElementById("obj-cancel-edit-btn").style.display = "none";
   }
+
+  // "Objectif mensuel" (ex : "Mettre 1000€ de côté") : à cocher une seule
+  // fois par mois, le dernier jour, plutôt que suivi en heures/semaine —
+  // le champ "Volume cible" n'a alors plus de sens et est masqué.
+  document.getElementById("obj-monthly").addEventListener("change", e=>{
+    document.getElementById("obj-hours-wrap").style.display = e.target.checked ? "none" : "";
+  });
 
   // "Tous les jours" : masque la date de fin (l'objectif devient permanent,
   // sans échéance, jusqu'à ce qu'on clique sur "Arrêter" dans la liste).
@@ -805,6 +824,8 @@ export function initJamsPlansApp() {
     const objHM = hoursToHM(obj.weekly_hours_target);
     document.getElementById("obj-hours").value = objHM.h;
     document.getElementById("obj-minutes").value = objHM.m;
+    document.getElementById("obj-monthly").checked = !!obj.is_monthly;
+    document.getElementById("obj-hours-wrap").style.display = obj.is_monthly ? "none" : "";
     document.getElementById("obj-submit-btn").textContent = "Enregistrer les modifications";
     document.getElementById("obj-cancel-edit-btn").style.display = "inline-block";
     document.querySelectorAll(".target-switch-btn").forEach(b=>b.classList.remove("active"));
@@ -827,13 +848,14 @@ export function initJamsPlansApp() {
     const startDate = document.getElementById("obj-start-date").value;
     const noEndDate = document.getElementById("obj-no-end-date").checked;
     const date = noEndDate ? "" : document.getElementById("obj-date").value;
-    const hours = hmToHours(document.getElementById("obj-hours").value, document.getElementById("obj-minutes").value);
+    const isMonthly = document.getElementById("obj-monthly").checked;
+    const hours = isMonthly ? 0 : hmToHours(document.getElementById("obj-hours").value, document.getElementById("obj-minutes").value);
     const year = date ? new Date(date+"T00:00:00").getFullYear() : new Date().getFullYear();
 
     if (editingObjectiveId){
       const existing = state.objectives.find(o=>o.id===editingObjectiveId);
       if (!existing) { resetObjectiveForm(); return; }
-      const patch = { title, category, start_date: startDate || null, target_date: date || null, weekly_hours_target: hours };
+      const patch = { title, category, start_date: startDate || null, target_date: date || null, weekly_hours_target: hours, is_monthly: isMonthly };
       if (SUPABASE_CONFIGURED){
         try {
           const updated = await db.updateObjective(editingObjectiveId, mapObjectiveToDb({ ...existing, ...patch }));
@@ -847,7 +869,7 @@ export function initJamsPlansApp() {
       return;
     }
 
-    const draft = { title, category, start_date: startDate || null, target_date: date || null, weekly_hours_target: hours, achieved: false, history: [], currentYear: year };
+    const draft = { title, category, start_date: startDate || null, target_date: date || null, weekly_hours_target: hours, achieved: false, history: [], currentYear: year, is_monthly: isMonthly, monthly_completions: {} };
 
     if (SUPABASE_CONFIGURED){
       try {
@@ -1102,13 +1124,13 @@ export function initJamsPlansApp() {
         // aussi, dans la liste des objectifs en cours.
         const isStillOpen = !obj.achieved && (!obj.target_date || obj.target_date >= today);
 
-        const progressHtml = objectiveProgressHtml(obj);
+        const progressHtml = obj.is_monthly ? "" : objectiveProgressHtml(obj);
 
         li.innerHTML = `
           <div style="display:flex; align-items:flex-start; justify-content:space-between; width:100%;">
             <div style="flex:1;">
-              <div class="obj-title">${escapeHtml(obj.title)}<span class="cat-badge" style="background:${categoryColor(obj.category || "Autre")};">${escapeHtml(obj.category || "Autre")}</span>${isOngoing ? '<span class="cat-badge" style="background:var(--violet-soft); color:var(--violet);">tous les jours</span>' : ""}${obj.achieved ? '<span class="achieved-badge">atteint</span>' : (isStillOpen ? '<span class="pending-badge">pas encore réussi</span>' : "")}</div>
-              <div class="obj-meta">${obj.weekly_hours_target}h / semaine${dateRangeText ? " · "+dateRangeText : ""}</div>
+              <div class="obj-title">${escapeHtml(obj.title)}<span class="cat-badge" style="background:${categoryColor(obj.category || "Autre")};">${escapeHtml(obj.category || "Autre")}</span>${obj.is_monthly ? '<span class="cat-badge" style="background:var(--violet-soft); color:var(--violet);">mensuel</span>' : ""}${isOngoing ? '<span class="cat-badge" style="background:var(--violet-soft); color:var(--violet);">tous les jours</span>' : ""}${obj.achieved ? '<span class="achieved-badge">atteint</span>' : (isStillOpen ? '<span class="pending-badge">pas encore réussi</span>' : "")}</div>
+              <div class="obj-meta">${obj.is_monthly ? "Objectif mensuel (coché le dernier jour du mois)" : `${obj.weekly_hours_target}h / semaine`}${dateRangeText ? " · "+dateRangeText : ""}</div>
               ${progressHtml}
               ${historyHtml}
             </div>
@@ -1296,8 +1318,8 @@ export function initJamsPlansApp() {
         li.innerHTML = `
           <div>
             <div class="obj-title">${escapeHtml(obj.title)}<span class="cat-badge" style="background:${categoryColor(obj.category || "Autre")};">${escapeHtml(obj.category || "Autre")}</span><span class="achieved-badge">atteint</span></div>
-            <div class="obj-meta">${obj.weekly_hours_target}h / semaine${dateRangeText ? " · "+dateRangeText : ""}</div>
-            ${objectiveProgressHtml(obj)}
+            <div class="obj-meta">${obj.is_monthly ? "Objectif mensuel" : `${obj.weekly_hours_target}h / semaine`}${dateRangeText ? " · "+dateRangeText : ""}</div>
+            ${obj.is_monthly ? "" : objectiveProgressHtml(obj)}
           </div>
           <div style="display:flex; gap:12px;">
             <button class="achieve-toggle">Marquer non atteint</button>
@@ -1331,8 +1353,8 @@ export function initJamsPlansApp() {
         li.innerHTML = `
           <div>
             <div class="obj-title">${escapeHtml(obj.title)}<span class="cat-badge" style="background:${categoryColor(obj.category || "Autre")};">${escapeHtml(obj.category || "Autre")}</span><span class="priority-badge" style="color:var(--red); border-color:var(--red);">échec</span></div>
-            <div class="obj-meta">${obj.weekly_hours_target}h / semaine · échéance dépassée (${formatDateFr(obj.target_date)})</div>
-            ${objectiveProgressHtml(obj)}
+            <div class="obj-meta">${obj.is_monthly ? "Objectif mensuel" : `${obj.weekly_hours_target}h / semaine`} · échéance dépassée (${formatDateFr(obj.target_date)})</div>
+            ${obj.is_monthly ? "" : objectiveProgressHtml(obj)}
           </div>
           <div style="display:flex; gap:12px;">
             <button class="achieve-toggle">Marquer atteint</button>
@@ -1775,10 +1797,12 @@ export function initJamsPlansApp() {
     // ex : lecture pendant un trajet) est affiché en retrait, avec un petit
     // repère juste avant son horaire, pour bien le distinguer des créneaux
     // structurants qui se suivent — sans rien changer d'autre pour eux.
-    const blocksHtml = blocks.map(b=>`
+    const blocksHtml = blocks.map(b=>{
+      const linkedObjective = b.objective_id ? state.objectives.find(o=>o.id===b.objective_id) : null;
+      return `
       <div class="dt-legend-item${b.secondary ? " dt-legend-secondary" : ""}" data-block-id="${b.id}">
         <span class="dt-swatch" style="background:${blockColorMap[b.label] || categoryColor(b.label)};"></span>
-        <span><span class="mono" style="font-weight:600;">${formatBlockDuration(b.start, b.end)}</span> ${escapeHtml(b.label)}</span>
+        <span><span class="mono" style="font-weight:600;">${formatBlockDuration(b.start, b.end)}</span> ${escapeHtml(b.label)}${linkedObjective ? ` <span class="muted" style="font-size:10.5px;">· ${escapeHtml(linkedObjective.title)}</span>` : ""}</span>
         ${b.secondary ? '<span class="dt-secondary-badge" title="Chevauche un autre créneau">⤷ superposé</span>' : ""}
         <span class="mono muted">${b.start}–${b.end}</span>
         <span style="display:flex; gap:8px; margin-left:auto;">
@@ -1786,7 +1810,8 @@ export function initJamsPlansApp() {
           <button type="button" class="del-btn dt-delete-btn">Supprimer</button>
         </span>
       </div>
-    `).join("");
+    `;
+    }).join("");
     // Prières du jour : lecture seule, pas de Modifier/Supprimer (elles se
     // gèrent depuis Profil), affichées avec la couleur de l'anneau intérieur.
     const prayerHtml = prayerBlocks.map(b=>`
@@ -1809,6 +1834,7 @@ export function initJamsPlansApp() {
         document.getElementById("dt-end").value = block.end;
         document.getElementById("dt-label").value = block.label;
         document.getElementById("dt-secondary").checked = !!block.secondary;
+        document.getElementById("dt-objective").value = block.objective_id || "";
         document.getElementById("dt-submit-btn").textContent = "Enregistrer les modifications";
         document.getElementById("dt-cancel-edit-btn").style.display = "inline-block";
         document.getElementById("dt-label").focus();
@@ -1829,6 +1855,7 @@ export function initJamsPlansApp() {
     document.getElementById("dt-end").value = "10:00";
     document.getElementById("dt-label").value = "";
     document.getElementById("dt-secondary").checked = false;
+    document.getElementById("dt-objective").value = "";
     document.getElementById("dt-submit-btn").textContent = "+ Ajouter";
     document.getElementById("dt-cancel-edit-btn").style.display = "none";
   }
@@ -1945,7 +1972,22 @@ export function initJamsPlansApp() {
     });
   }
 
+  // Liste déroulante "Objectif correspondant" de la fiche d'ajout d'un
+  // élément de journée type : relie chaque créneau (Sport, Travail...) à
+  // l'objectif qu'il sert, ou à "Routine" quand il n'en sert aucun en
+  // particulier (ex : Sommeil, Trajet). Repeuplée à chaque affichage pour
+  // rester à jour avec la liste des objectifs.
+  function populateDtObjectiveSelect(){
+    const sel = document.getElementById("dt-objective");
+    if (!sel) return;
+    const currentVal = sel.value;
+    sel.innerHTML = '<option value="">Routine (aucun objectif)</option>' +
+      state.objectives.map(o=>`<option value="${o.id}">${escapeHtml(o.title)}</option>`).join("");
+    sel.value = currentVal;
+  }
+
   function renderDayTemplate(){
+    populateDtObjectiveSelect();
     renderDayTemplatePeriods();
     renderDayTemplateRing();
     renderDayTemplateProgress();
@@ -2044,6 +2086,7 @@ export function initJamsPlansApp() {
     const end = document.getElementById("dt-end").value;
     const label = document.getElementById("dt-label").value.trim();
     const secondary = document.getElementById("dt-secondary").checked;
+    const objectiveId = document.getElementById("dt-objective").value || null;
     if (!start || !end || !label) return;
 
     // Le chevauchement entre créneaux est volontairement autorisé (ex : lire
@@ -2051,16 +2094,17 @@ export function initJamsPlansApp() {
 
     if (editingDayTemplateBlockId){
       const block = activeTpl.blocks.find(b=>b.id===editingDayTemplateBlockId);
-      if (block){ block.start = start; block.end = end; block.label = label; block.secondary = secondary; }
+      if (block){ block.start = start; block.end = end; block.label = label; block.secondary = secondary; block.objective_id = objectiveId; }
       cancelDayTemplateEdit();
     } else {
-      activeTpl.blocks.push({ id: nextId(), start, end, label, secondary });
+      activeTpl.blocks.push({ id: nextId(), start, end, label, secondary, objective_id: objectiveId });
       // Auto-chaînage : la fin du bloc qu'on vient d'ajouter devient le début
       // proposé pour le prochain, pour ne pas ressaisir l'heure à chaque fois.
       document.getElementById("dt-start").value = end;
       document.getElementById("dt-end").value = "";
       document.getElementById("dt-label").value = "";
       document.getElementById("dt-secondary").checked = false;
+      document.getElementById("dt-objective").value = "";
     }
     await saveDayTemplates();
     renderDayTemplate();
@@ -2311,8 +2355,47 @@ export function initJamsPlansApp() {
     const list = document.getElementById("checkin-list");
     list.innerHTML = "";
 
+    // Objectifs mensuels (case "Objectif mensuel" cochée dans Target, ex :
+    // "Mettre 1000€ de côté") : à cocher une seule fois par mois — ils
+    // n'apparaissent donc qu'ici, le tout dernier jour du mois, pour ne pas
+    // encombrer la Check-liste le reste du temps.
+    if (isLastDayOfMonth(date)){
+      const monthKey = date.slice(0, 7); // "YYYY-MM"
+      state.objectives.filter(o=>o.is_monthly && !o.achieved).forEach(obj=>{
+        const done = !!(obj.monthly_completions && obj.monthly_completions[monthKey]);
+        const card = document.createElement("div");
+        card.className = "card";
+        card.style.marginBottom = "12px";
+        card.innerHTML = `
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <strong style="font-size:14px;">${escapeHtml(obj.title)}<span class="cat-badge" style="background:${categoryColor(obj.category || "Autre")};">${escapeHtml(obj.category || "Autre")}</span><span class="pending-badge">mensuel</span></strong>
+          </div>
+          <label style="display:flex; align-items:center; gap:8px; margin-top:10px; cursor:pointer; font-size:13px;">
+            <input type="checkbox" class="monthly-obj-checkbox" style="width:auto;" ${done ? "checked" : ""} />
+            Fait ce mois-ci
+          </label>
+        `;
+        card.querySelector(".monthly-obj-checkbox").addEventListener("change", async e=>{
+          const checked = e.target.checked;
+          const completions = { ...(obj.monthly_completions || {}), [monthKey]: checked };
+          if (SUPABASE_CONFIGURED){
+            try {
+              const updated = await db.updateObjective(obj.id, { monthly_completions: completions });
+              Object.assign(obj, updated);
+            } catch(err){ showToast("Erreur : " + err.message, "error"); e.target.checked = !checked; return; }
+          } else {
+            obj.monthly_completions = completions;
+          }
+          showToast(checked ? "Marqué fait pour ce mois-ci." : "Décoché pour ce mois-ci.", "success");
+        });
+        list.appendChild(card);
+      });
+    }
+
     if (items.length === 0){
-      list.innerHTML = emptyStateHtml("Aucune tâche pour aujourd'hui. Ajoutez une routine dans « Target » ou une tâche dans « Agenda ».");
+      if (list.innerHTML === ""){
+        list.innerHTML = emptyStateHtml("Aucune tâche pour aujourd'hui. Ajoutez une routine dans « Target » ou une tâche dans « Agenda ».");
+      }
       return;
     }
 

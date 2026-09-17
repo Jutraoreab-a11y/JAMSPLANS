@@ -21,11 +21,20 @@ create table if not exists public.objectives (
   achieved boolean not null default false,             -- objectif marqué "atteint"
   current_year integer not null default extract(year from now())::int, -- cycle en cours (N, N+1, ...)
   history jsonb not null default '[]'::jsonb,           -- reports d'année : [{ "fromYear": 2026, "toYear": 2027 }, ...]
+  is_monthly boolean not null default false,            -- "objectif mensuel" (ex: "Mettre 1000€ de côté"),
+                                                         -- coché une fois par mois plutôt que suivi en heures/semaine
+  monthly_completions jsonb not null default '{}'::jsonb, -- { "2026-09": true, "2026-10": false, ... }
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
 comment on table public.objectives is 'Grands objectifs définis par l''utilisateur (ex: réussir un diplôme)';
+
+-- Idempotent : ajoute les deux colonnes ci-dessus sur une base déjà créée
+-- avant leur introduction (objectif "mensuel", coché 1x/mois plutôt que
+-- suivi en heures/semaine — ex: "Mettre 1000€ de côté").
+alter table public.objectives add column if not exists is_monthly boolean not null default false;
+alter table public.objectives add column if not exists monthly_completions jsonb not null default '{}'::jsonb;
 
 -- ---------------------------------------------------------
 -- TABLE: routines
