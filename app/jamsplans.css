@@ -415,6 +415,7 @@
   }
   .toast.error{border-color:var(--red);}
   .toast.success{border-color:var(--green);}
+  .toast.warning{border-color:var(--orange);}
   .toast.leaving{animation:toastOut .2s ease forwards;}
   @keyframes toastIn{ to{opacity:1; transform:translateY(0);} }
   @keyframes toastOut{ to{opacity:0; transform:translateY(8px);} }

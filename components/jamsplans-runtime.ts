@@ -272,10 +272,13 @@ export function initJamsPlansApp() {
     toast.textContent = message;
     toast.style.pointerEvents = "auto";
     container.appendChild(toast);
+    // Un message plus long (ex : avertissement détaillé) reste affiché plus
+    // longtemps, pour avoir le temps d'être lu avant de disparaître.
+    const duration = Math.min(Math.max(3200, message.length * 60), 9000);
     setTimeout(()=>{
       toast.classList.add("leaving");
       setTimeout(()=> toast.remove(), 220);
-    }, 3200);
+    }, duration);
   }
 
   // Petit pictogramme ligne unique, réutilisé pour tous les états vides
@@ -2294,6 +2297,20 @@ export function initJamsPlansApp() {
     }
     const weekdays = Array.from(document.querySelectorAll("#np-weekdays input[type=checkbox]:checked")).map(cb=>parseInt(cb.value, 10));
     const recurringYearly = document.getElementById("np-recurring").checked;
+    // Piège découvert en usage réel : "se répète chaque année" ne compare
+    // que le jour+mois (l'année est ignorée). Si la période saisie couvre
+    // déjà plus de 366 jours (ex : 01/10/2026 -> 31/10/2027, pensée comme
+    // "13 mois d'un coup"), cocher cette case réduit silencieusement la
+    // période à la seule fenêtre jour/mois (ici, le seul mois d'octobre,
+    // chaque année) — sans qu'aucune erreur ne le signale. On avertit sans
+    // bloquer, pour laisser le cas légitime (ex : "1 oct -> 31 mars" voulu
+    // récurrent) fonctionner normalement.
+    if (recurringYearly && start && end){
+      const spanDays = (new Date(end+"T00:00:00") - new Date(start+"T00:00:00")) / 86400000;
+      if (spanDays > 366){
+        showToast("Attention : \"se répète chaque année\" ne compare que le jour et le mois, pas l'année — avec une période de plus d'un an, seule la fenêtre jour/mois (ex : 1er → 31 octobre) sera prise en compte chaque année, pas les mois entre les deux. Décoche la case si tu veux couvrir ces dates exactes une seule fois.", "warning");
+      }
+    }
     if (editingPeriodId){
       const tpl = state.dayTemplates.find(t=>t.id===editingPeriodId);
       if (tpl){
