@@ -24,6 +24,8 @@ create table if not exists public.objectives (
   is_monthly boolean not null default false,            -- "objectif mensuel" (ex: "Mettre 1000€ de côté"),
                                                          -- coché une fois par mois plutôt que suivi en heures/semaine
   monthly_completions jsonb not null default '{}'::jsonb, -- { "2026-09": true, "2026-10": false, ... }
+  given_up boolean not null default false,              -- objectif marqué manuellement "en échec" (bouton
+                                                         -- "Pas encore réussi" côté app) avant même l'échéance
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -35,6 +37,11 @@ comment on table public.objectives is 'Grands objectifs définis par l''utilisat
 -- suivi en heures/semaine — ex: "Mettre 1000€ de côté").
 alter table public.objectives add column if not exists is_monthly boolean not null default false;
 alter table public.objectives add column if not exists monthly_completions jsonb not null default '{}'::jsonb;
+
+-- Idempotent : colonne pour le bouton "Pas encore réussi" → marque l'objectif
+-- comme un échec assumé, qui doit apparaître immédiatement dans Archive
+-- (Échecs), sans attendre que l'échéance soit dépassée.
+alter table public.objectives add column if not exists given_up boolean not null default false;
 
 -- ---------------------------------------------------------
 -- TABLE: routines

@@ -136,6 +136,7 @@ export function initJamsPlansApp() {
       history: obj.history,
       is_monthly: !!obj.is_monthly,
       monthly_completions: obj.monthly_completions || {},
+      given_up: !!obj.given_up,
     };
   }
 
@@ -1266,7 +1267,7 @@ export function initJamsPlansApp() {
         li.innerHTML = `
           <div style="display:flex; align-items:flex-start; justify-content:space-between; width:100%;">
             <div style="flex:1;">
-              <div class="obj-title">${escapeHtml(obj.title)}<span class="cat-badge" style="background:${categoryColor(obj.category || "Autre")};">${escapeHtml(obj.category || "Autre")}</span>${obj.is_monthly ? '<span class="cat-badge" style="background:var(--violet-soft); color:var(--violet);">mensuel</span>' : ""}${isOngoing ? '<span class="cat-badge" style="background:var(--violet-soft); color:var(--violet);">tous les jours</span>' : ""}${obj.achieved ? '<span class="achieved-badge">atteint</span>' : (isStillOpen ? '<span class="pending-badge">pas encore réussi</span>' : "")}</div>
+              <div class="obj-title">${escapeHtml(obj.title)}<span class="cat-badge" style="background:${categoryColor(obj.category || "Autre")};">${escapeHtml(obj.category || "Autre")}</span>${obj.is_monthly ? '<span class="cat-badge" style="background:var(--violet-soft); color:var(--violet);">mensuel</span>' : ""}${isOngoing ? '<span class="cat-badge" style="background:var(--violet-soft); color:var(--violet);">tous les jours</span>' : ""}${obj.achieved ? '<span class="achieved-badge">atteint</span>' : ""}</div>
               <div class="obj-meta">${obj.is_monthly ? "Objectif mensuel (coché le dernier jour du mois)" : `${obj.weekly_hours_target}h / semaine`}${dateRangeText ? " · "+dateRangeText : ""}</div>
               ${progressHtml}
               ${historyHtml}
@@ -1275,6 +1276,7 @@ export function initJamsPlansApp() {
           </div>
           <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
             <button class="achieve-toggle">${obj.achieved ? "Marquer non atteint" : "Marquer atteint"}</button>
+            ${isStillOpen ? '<button class="continue-btn give-up-btn">Pas encore réussi</button>' : ""}
             <button class="continue-btn edit-obj-btn">Modifier</button>
             ${isOngoing ? '<button class="continue-btn stop-objective-btn">Arrêter</button>' : ""}
             ${!obj.achieved && !isOngoing ? '<button class="continue-btn continue-year-btn">Poursuivre</button>' : ""}
@@ -1289,13 +1291,27 @@ export function initJamsPlansApp() {
             openContinueObjectivePrompt(obj, "arrêté");
           });
         }
+        const giveUpBtn = li.querySelector(".give-up-btn");
+        if (giveUpBtn){
+          giveUpBtn.addEventListener("click", async ()=>{
+            if (SUPABASE_CONFIGURED){
+              try { const updated = await db.updateObjective(obj.id, { given_up: true }); Object.assign(obj, updated); }
+              catch(err){ showToast("Erreur : " + err.message, "error"); return; }
+            } else {
+              obj.given_up = true;
+            }
+            renderAll();
+            openContinueObjectivePrompt(obj, "en échec");
+          });
+        }
         li.querySelector(".achieve-toggle").addEventListener("click", async ()=>{
           const nextAchieved = !obj.achieved;
+          const patch = nextAchieved ? { achieved: true, given_up: false } : { achieved: false };
           if (SUPABASE_CONFIGURED){
-            try { const updated = await db.updateObjective(obj.id, { achieved: nextAchieved }); Object.assign(obj, updated); }
+            try { const updated = await db.updateObjective(obj.id, patch); Object.assign(obj, updated); }
             catch(err){ showToast("Erreur : " + err.message, "error"); return; }
           } else {
-            obj.achieved = nextAchieved;
+            Object.assign(obj, patch);
           }
           renderAll();
           if (nextAchieved) openContinueObjectivePrompt(obj, "atteint");
@@ -1434,7 +1450,7 @@ export function initJamsPlansApp() {
   function renderArchive(){
     const today = todayISO();
     const successes = state.objectives.filter(o=>o.achieved && objectiveMatchesSelectedYear(o));
-    const failures = state.objectives.filter(o=>!o.achieved && o.target_date && o.target_date < today && objectiveMatchesSelectedYear(o));
+    const failures = state.objectives.filter(o=>!o.achieved && (o.given_up || (o.target_date && o.target_date < today)) && objectiveMatchesSelectedYear(o));
 
     // Jauge du taux de réussite
     const total = successes.length + failures.length;
@@ -1494,7 +1510,7 @@ export function initJamsPlansApp() {
         li.innerHTML = `
           <div>
             <div class="obj-title">${escapeHtml(obj.title)}<span class="cat-badge" style="background:${categoryColor(obj.category || "Autre")};">${escapeHtml(obj.category || "Autre")}</span><span class="priority-badge" style="color:var(--red); border-color:var(--red);">échec</span></div>
-            <div class="obj-meta">${obj.is_monthly ? "Objectif mensuel" : `${obj.weekly_hours_target}h / semaine`} · échéance dépassée (${formatDateFr(obj.target_date)})</div>
+            <div class="obj-meta">${obj.is_monthly ? "Objectif mensuel" : `${obj.weekly_hours_target}h / semaine`} · ${obj.target_date && obj.target_date < today ? `échéance dépassée (${formatDateFr(obj.target_date)})` : "marqué en échec"}</div>
             ${obj.is_monthly ? "" : objectiveProgressHtml(obj)}
           </div>
           <div style="display:flex; gap:12px;">
@@ -1505,10 +1521,11 @@ export function initJamsPlansApp() {
         `;
         li.querySelector(".achieve-toggle").addEventListener("click", async ()=>{
           if (SUPABASE_CONFIGURED){
-            try { const updated = await db.updateObjective(obj.id, { achieved: true }); Object.assign(obj, updated); }
+            try { const updated = await db.updateObjective(obj.id, { achieved: true, given_up: false }); Object.assign(obj, updated); }
             catch(err){ showToast("Erreur : " + err.message, "error"); return; }
           } else {
             obj.achieved = true;
+            obj.given_up = false;
           }
           renderAll();
           openContinueObjectivePrompt(obj, "atteint");
