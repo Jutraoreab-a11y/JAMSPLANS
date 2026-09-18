@@ -2344,8 +2344,7 @@ export function initJamsPlansApp() {
     // défaut" a été retiré) : dans ce cas, simplement pas de bloc structure.
     if (template){
       template.blocks.forEach(b=>{
-        const linkedObjectivesText = getBlockLinkedObjectives(b).map(o=>o.title).join(" + ");
-        items.push({ start: b.start, end: b.end, label: b.label, kind: "template", status: null, objectiveTitle: linkedObjectivesText || null });
+        items.push({ start: b.start, end: b.end, label: b.label, kind: "template", status: null });
       });
     }
 
@@ -2358,15 +2357,14 @@ export function initJamsPlansApp() {
         if (obj.target_date && dateStr > obj.target_date) return;
       }
       const log = state.dailyLogs.find(l=>l.routine_id===r.id && l.log_date===dateStr);
-      items.push({ start: r.start_time.slice(0,5), end: r.end_time.slice(0,5), label: r.label, kind: "routine", status: log ? log.status : null, hours: log ? log.actual_hours : null, planned: r.planned_hours, objectiveTitle: obj ? obj.title : null });
+      items.push({ start: r.start_time.slice(0,5), end: r.end_time.slice(0,5), label: r.label, kind: "routine", status: log ? log.status : null, hours: log ? log.actual_hours : null, planned: r.planned_hours });
     });
 
     // Tâches d'agenda avec créneau, dont la plage de dates couvre ce jour.
     state.agendaTasks.filter(t=> dateStr >= t.start_date && dateStr <= t.end_date && t.planning_start && t.planning_end).forEach(t=>{
       const log = state.dailyLogs.find(l=>l.agenda_task_id===t.id && l.log_date===dateStr);
       const isPrayer = (t.label||"").startsWith(PRAYER_LABEL_PREFIX);
-      const obj = t.objective_id ? state.objectives.find(o=>o.id===t.objective_id) : null;
-      items.push({ start: t.planning_start.slice(0,5), end: t.planning_end.slice(0,5), label: t.label, kind: "agenda", status: log ? log.status : null, hours: log ? log.actual_hours : null, planned: t.planned_hours, isPrayer, objectiveTitle: obj ? obj.title : null });
+      items.push({ start: t.planning_start.slice(0,5), end: t.planning_end.slice(0,5), label: t.label, kind: "agenda", status: log ? log.status : null, hours: log ? log.actual_hours : null, planned: t.planned_hours, isPrayer });
     });
 
     // Tâches sans horaire précis (agenda libre) : listées à part, en bas.
@@ -2378,16 +2376,11 @@ export function initJamsPlansApp() {
       const statusKey = it.status || "none";
       const swatchColor = it.kind === "template" ? categoryColor(it.label) : "var(--violet)";
       const hoursText = it.hours !== null && it.hours !== undefined ? ` · ${it.hours}h/${it.planned}h` : "";
-      // Chaque élément (bloc de journée type ou routine/tâche) est rattaché
-      // à son objectif quand il y en a un, pour qu'on voie clairement à
-      // quel objectif chaque créneau appartient (plutôt qu'un simple bloc
-      // anonyme).
-      const objectiveTag = it.objectiveTitle ? ` <span class="muted" style="font-size:10.5px;">· ${escapeHtml(it.objectiveTitle)}</span>` : "";
       return `
         <div class="dc-item">
           <span class="dc-swatch" style="background:${swatchColor};"></span>
           <span class="dc-time">${it.isPrayer ? it.start : `${it.start}–${it.end}`}</span>
-          <span class="dc-label">${escapeHtml(it.label)}${it.kind !== "template" ? hoursText : ""}${objectiveTag}</span>
+          <span class="dc-label">${escapeHtml(it.label)}${it.kind !== "template" ? hoursText : ""}</span>
           ${it.kind !== "template" ? `<span class="dc-status ${statusKey}">${statusLabel(it.status)}</span>` : `<span class="dc-status none">structure</span>`}
         </div>
       `;
