@@ -2344,7 +2344,7 @@ export function initJamsPlansApp() {
     // défaut" a été retiré) : dans ce cas, simplement pas de bloc structure.
     if (template){
       template.blocks.forEach(b=>{
-        items.push({ start: b.start, end: b.end, label: b.label, kind: "template", status: null });
+        items.push({ start: b.start, end: b.end, label: b.label, kind: "template", status: null, secondary: !!b.secondary });
       });
     }
 
@@ -2376,11 +2376,17 @@ export function initJamsPlansApp() {
       const statusKey = it.status || "none";
       const swatchColor = it.kind === "template" ? categoryColor(it.label) : "var(--violet)";
       const hoursText = it.hours !== null && it.hours !== undefined ? ` · ${it.hours}h/${it.planned}h` : "";
+      // Même repère "⤷ superposé" que dans la légende de "Journée type",
+      // pour reconnaître d'un coup d'œil ce qui n'est pas compté dans les 24H.
+      const secondaryBadge = it.kind === "template" && it.secondary
+        ? '<span class="dt-secondary-badge" title="Chevauche un autre créneau">⤷ superposé</span>'
+        : "";
       return `
         <div class="dc-item">
           <span class="dc-swatch" style="background:${swatchColor};"></span>
           <span class="dc-time">${it.isPrayer ? it.start : `${it.start}–${it.end}`}</span>
           <span class="dc-label">${escapeHtml(it.label)}${it.kind !== "template" ? hoursText : ""}</span>
+          ${secondaryBadge}
           ${it.kind !== "template" ? `<span class="dc-status ${statusKey}">${statusLabel(it.status)}</span>` : `<span class="dc-status none">structure</span>`}
         </div>
       `;
@@ -2409,41 +2415,84 @@ export function initJamsPlansApp() {
   // apparaissent en fond (plus discret), et les routines/tâches d'agenda
   // se superposent, colorées par leur statut réel ce jour-là (vert/orange
   // /rouge) si un check-in existe, sinon par leur catégorie.
+  // Même mise en forme que l'anneau de "Journée type" (renderDayTemplateRing) :
+  // un anneau principal pour les éléments structurants de la journée (blocs
+  // de journée type non superposés), un anneau secondaire juste en dessous
+  // pour tout ce qui se superpose (blocs "Chevauche un autre créneau" +
+  // routines/tâches d'agenda, qui ne font pas partie de la structure figée),
+  // des couleurs vives (colorées par statut réel quand un check-in existe),
+  // et les repères d'heure 0h/6h/12h/18h autour de l'anneau.
   function renderDayConsultRing(items, dateStr){
     if (items.length === 0) return "";
-    const size = 220, cx = 110, cy = 110, r = 74, sw = 17;
+    const size = 260, cx = 130, cy = 130, r = 88, sw = 20;
     const C = 2 * Math.PI * r;
 
-    const segments = [];
-    items.forEach(it=>{
-      const startMin = timeToMinutes(it.start);
-      const endMin = timeToMinutes(it.end);
-      if (endMin > startMin){
-        segments.push({ it, startMin, lenMin: endMin - startMin });
-      } else {
-        segments.push({ it, startMin, lenMin: 1440 - startMin });
-        segments.push({ it, startMin: 0, lenMin: endMin });
-      }
-    });
+    const primaryItems = items.filter(it=>it.kind === "template" && !it.secondary);
+    const secondaryItems = items.filter(it=>!(it.kind === "template" && !it.secondary));
+
+    const toSegments = (list)=>{
+      const segs = [];
+      list.forEach(it=>{
+        const startMin = timeToMinutes(it.start);
+        const endMin = timeToMinutes(it.end);
+        if (endMin > startMin){
+          segs.push({ it, startMin, lenMin: endMin - startMin });
+        } else {
+          segs.push({ it, startMin, lenMin: 1440 - startMin });
+          segs.push({ it, startMin: 0, lenMin: endMin });
+        }
+      });
+      return segs;
+    };
 
     const colorFor = (it)=>{
-      if (it.kind === "template") return categoryColor(it.label);
       if (it.status === "done") return "var(--green)";
       if (it.status === "partial") return "var(--orange)";
       if (it.status === "not_done") return "var(--red)";
       return categoryColor(it.label);
     };
 
+    const segments = toSegments(primaryItems);
     const segmentsHtml = segments.map(seg=>{
       const startFrac = seg.startMin/1440;
       const arcLen = (seg.lenMin/1440)*C;
       const dashoffset = C*(1-startFrac);
-      const opacity = seg.it.kind === "template" ? 0.35 : 1;
-      return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${colorFor(seg.it)}" stroke-width="${sw}" opacity="${opacity}"
+      return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${colorFor(seg.it)}" stroke-width="${sw}"
         stroke-dasharray="${arcLen} ${C-arcLen}" stroke-dashoffset="${dashoffset}"
         transform="rotate(-90 ${cx} ${cy})">
         <title>${escapeHtml(seg.it.label)} (${seg.it.start} à ${seg.it.end})</title>
       </circle>`;
+    }).join("");
+
+    const rSecondary = r - sw/2 - 8, swSecondary = 10;
+    const CSecondary = 2 * Math.PI * rSecondary;
+    const secondarySegments = toSegments(secondaryItems);
+    const secondaryRingBase = secondarySegments.length
+      ? `<circle cx="${cx}" cy="${cy}" r="${rSecondary}" fill="none" stroke="var(--empty)" stroke-width="${swSecondary}" />`
+      : "";
+    const secondarySegmentsHtml = secondarySegments.map(seg=>{
+      const startFrac = seg.startMin/1440;
+      const arcLen = (seg.lenMin/1440)*CSecondary;
+      const dashoffset = CSecondary*(1-startFrac);
+      return `<circle cx="${cx}" cy="${cy}" r="${rSecondary}" fill="none" stroke="${colorFor(seg.it)}" stroke-width="${swSecondary}"
+        stroke-dasharray="${arcLen} ${CSecondary-arcLen}" stroke-dashoffset="${dashoffset}"
+        transform="rotate(-90 ${cx} ${cy})">
+        <title>${escapeHtml(seg.it.label)} (${seg.it.start} à ${seg.it.end})${seg.it.kind === "template" ? " — superposé" : ""}</title>
+      </circle>`;
+    }).join("");
+
+    const ticks = [
+      { angle: -90, label: "0h" },
+      { angle: 0, label: "6h" },
+      { angle: 90, label: "12h" },
+      { angle: 180, label: "18h" },
+    ];
+    const tickR = r + sw/2 + 16;
+    const ticksHtml = ticks.map(t=>{
+      const rad = t.angle * Math.PI/180;
+      const x = cx + tickR*Math.cos(rad);
+      const y = cy + tickR*Math.sin(rad);
+      return `<text x="${x}" y="${y}" text-anchor="middle" dy="0.35em" font-size="10" font-family="'IBM Plex Mono',monospace" fill="var(--muted)">${t.label}</text>`;
     }).join("");
 
     const dayLabel = new Date(dateStr+"T00:00:00").toLocaleDateString("fr-FR", { weekday:"short", day:"numeric", month:"short" });
@@ -2453,6 +2502,9 @@ export function initJamsPlansApp() {
         <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
           <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--empty)" stroke-width="${sw}" />
           ${segmentsHtml}
+          ${secondaryRingBase}
+          ${secondarySegmentsHtml}
+          ${ticksHtml}
           <text x="${cx}" y="${cy}" text-anchor="middle" font-size="15" font-family="'IBM Plex Mono',monospace" fill="var(--ink)">${dayLabel}</text>
         </svg>
       </div>
