@@ -184,6 +184,18 @@ export function initJamsPlansApp() {
     return obj ? (obj.category || "Autre") : "Autre";
   }
 
+  // Un bloc de journée type peut être rattaché à plusieurs objectifs à la
+  // fois (ex : un créneau "Deep work" qui sert 2 objectifs). Compatible avec
+  // les anciens blocs enregistrés avec un seul `objective_id` (avant le
+  // passage au multi-sélection).
+  function getBlockObjectiveIds(b){
+    if (Array.isArray(b.objective_ids)) return b.objective_ids;
+    return b.objective_id ? [b.objective_id] : [];
+  }
+  function getBlockLinkedObjectives(b){
+    return getBlockObjectiveIds(b).map(id=>state.objectives.find(o=>o.id===id)).filter(Boolean);
+  }
+
   // Calcule où on en est dans la fenêtre de temps d'un objectif (début -> fin).
   // Retourne null si les deux dates ne sont pas renseignées.
   function objectiveTimeProgress(obj){
@@ -290,8 +302,12 @@ export function initJamsPlansApp() {
     {value:0,label:"Dimanche",short:"Dim"},
   ];
 
+  // Compteur simple + horodatage + suffixe aléatoire : évite qu'un rechargement
+  // de page (qui remet le compteur à 0) ne fasse réattribuer un id déjà utilisé
+  // par un ancien bloc/période de journée type d'une session précédente (ces
+  // éléments sont gérés uniquement côté client, sans id généré par la base).
   let uid = 0;
-  const nextId = () => "id-" + (++uid);
+  const nextId = () => "id-" + Date.now().toString(36) + "-" + (++uid) + "-" + Math.random().toString(36).slice(2, 7);
 
   function todayISO(){ return new Date().toISOString().slice(0,10); }
   // Vrai si dateStr est le dernier jour de son mois — sert à n'afficher les
@@ -1664,6 +1680,18 @@ export function initJamsPlansApp() {
     return h*60 + m;
   }
 
+  // Durée en minutes d'un bloc (gère le passage de minuit).
+  function blockDurationMin(start, end){
+    const s = timeToMinutes(start), e = timeToMinutes(end);
+    return e > s ? (e - s) : (1440 - s + e);
+  }
+  // Total des créneaux "structurants" (non superposés) d'une journée type,
+  // hors un bloc éventuellement exclu (ex : celui en cours de modification) —
+  // sert à vérifier qu'on ne dépasse jamais 24H au total.
+  function templateTotalMinutesExcluding(tpl, excludeId){
+    return tpl.blocks.filter(b=>!b.secondary && b.id!==excludeId).reduce((sum,b)=>sum + blockDurationMin(b.start, b.end), 0);
+  }
+
   // Durée d'un bloc de journée type, affichée devant son libellé dans la
   // légende (ex : "8h Sommeil", "1h30 Trajet") — gère le passage de minuit.
   function formatBlockDuration(start, end){
@@ -1924,11 +1952,12 @@ export function initJamsPlansApp() {
     // repère juste avant son horaire, pour bien le distinguer des créneaux
     // structurants qui se suivent — sans rien changer d'autre pour eux.
     const blocksHtml = blocks.map(b=>{
-      const linkedObjective = b.objective_id ? state.objectives.find(o=>o.id===b.objective_id) : null;
+      const linkedObjectives = getBlockLinkedObjectives(b);
+      const linkedObjectivesText = linkedObjectives.map(o=>o.title).join(" + ");
       return `
       <div class="dt-legend-item${b.secondary ? " dt-legend-secondary" : ""}" data-block-id="${b.id}">
         <span class="dt-swatch" style="background:${blockColorMap[b.label] || categoryColor(b.label)};"></span>
-        <span><span class="mono" style="font-weight:600;">${formatBlockDuration(b.start, b.end)}</span> ${escapeHtml(b.label)}${linkedObjective ? ` <span class="muted" style="font-size:10.5px;">· ${escapeHtml(linkedObjective.title)}</span>` : ""}</span>
+        <span><span class="mono" style="font-weight:600;">${formatBlockDuration(b.start, b.end)}</span> ${escapeHtml(b.label)}${linkedObjectivesText ? ` <span class="muted" style="font-size:10.5px;">· ${escapeHtml(linkedObjectivesText)}</span>` : ""}</span>
         ${b.secondary ? '<span class="dt-secondary-badge" title="Chevauche un autre créneau">⤷ superposé</span>' : ""}
         <span class="mono muted">${b.start}–${b.end}</span>
         <span style="display:flex; gap:8px; margin-left:auto;">
@@ -1960,7 +1989,7 @@ export function initJamsPlansApp() {
         document.getElementById("dt-end").value = block.end;
         document.getElementById("dt-label").value = block.label;
         document.getElementById("dt-secondary").checked = !!block.secondary;
-        document.getElementById("dt-objective").value = block.objective_id || "";
+        setDtObjectiveIds(getBlockObjectiveIds(block));
         document.getElementById("dt-submit-btn").textContent = "Enregistrer les modifications";
         document.getElementById("dt-cancel-edit-btn").style.display = "inline-block";
         document.getElementById("dt-label").focus();
@@ -1981,7 +2010,7 @@ export function initJamsPlansApp() {
     document.getElementById("dt-end").value = "10:00";
     document.getElementById("dt-label").value = "";
     document.getElementById("dt-secondary").checked = false;
-    document.getElementById("dt-objective").value = "";
+    setDtObjectiveIds([]);
     document.getElementById("dt-submit-btn").textContent = "+ Ajouter";
     document.getElementById("dt-cancel-edit-btn").style.display = "none";
   }
@@ -2098,18 +2127,36 @@ export function initJamsPlansApp() {
     });
   }
 
-  // Liste déroulante "Objectif correspondant" de la fiche d'ajout d'un
+  // Cases à cocher "Objectif correspondant" de la fiche d'ajout d'un
   // élément de journée type : relie chaque créneau (Sport, Travail...) à
-  // l'objectif qu'il sert, ou à "Routine" quand il n'en sert aucun en
+  // un ou plusieurs objectifs qu'il sert (plusieurs cases peuvent être
+  // cochées à la fois), ou à aucun quand il ne sert aucun objectif en
   // particulier (ex : Sommeil, Trajet). Repeuplée à chaque affichage pour
-  // rester à jour avec la liste des objectifs.
+  // rester à jour avec la liste des objectifs, en conservant les cases déjà
+  // cochées. Deux objectifs peuvent porter le même titre (ex : une "suite"
+  // créée via "Poursuivre") : l'année cible est ajoutée entre parenthèses
+  // pour les distinguer.
+  function getDtObjectiveIds(){
+    const wrap = document.getElementById("dt-objective-list");
+    if (!wrap) return [];
+    return Array.from(wrap.querySelectorAll("input:checked")).map(cb=>cb.value);
+  }
+  function setDtObjectiveIds(ids){
+    const wrap = document.getElementById("dt-objective-list");
+    if (!wrap) return;
+    wrap.querySelectorAll("input").forEach(cb=>{ cb.checked = ids.includes(cb.value); });
+  }
   function populateDtObjectiveSelect(){
-    const sel = document.getElementById("dt-objective");
-    if (!sel) return;
-    const currentVal = sel.value;
-    sel.innerHTML = '<option value="">Routine (aucun objectif)</option>' +
-      state.objectives.map(o=>`<option value="${o.id}">${escapeHtml(o.title)}</option>`).join("");
-    sel.value = currentVal;
+    const wrap = document.getElementById("dt-objective-list");
+    if (!wrap) return;
+    const currentIds = getDtObjectiveIds();
+    wrap.innerHTML = state.objectives.map(o=>`
+      <label class="np-day-chip" style="white-space:normal;">
+        <input type="checkbox" value="${o.id}" />
+        ${escapeHtml(o.title)}${o.currentYear ? ` <span class="muted" style="font-size:9.5px;">· ${o.currentYear}</span>` : ""}
+      </label>
+    `).join("");
+    setDtObjectiveIds(currentIds);
   }
 
   function renderDayTemplate(){
@@ -2125,6 +2172,29 @@ export function initJamsPlansApp() {
       try { await db.upsertProfile(state.userId, { day_template: state.dayTemplates }); }
       catch(err){ showToast("Erreur lors de l'enregistrement de la journée type : " + err.message, "error"); }
     }
+  }
+
+  // Les périodes et leurs blocs (créneaux) sont gérés entièrement côté
+  // client (pas d'id généré par la base) : un ancien bug de génération d'id
+  // (remis à zéro à chaque rechargement de page) a pu faire qu'un bloc ou
+  // une période créé(e) lors d'une session porte le même id qu'un autre créé
+  // lors d'une session précédente. Résultat : cliquer "Modifier" sur l'un
+  // modifiait l'autre (celui trouvé en premier dans le tableau), ce qui
+  // semblait "au hasard". On corrige ça au chargement en réattribuant un
+  // nouvel id (unique) à tout doublon détecté, puis on sauvegarde si besoin.
+  function dedupeDayTemplateIds(){
+    let changed = false;
+    const seenTplIds = new Set();
+    state.dayTemplates.forEach(tpl=>{
+      if (seenTplIds.has(tpl.id)){ tpl.id = nextId(); changed = true; }
+      seenTplIds.add(tpl.id);
+      const seenBlockIds = new Set();
+      (tpl.blocks || []).forEach(b=>{
+        if (seenBlockIds.has(b.id)){ b.id = nextId(); changed = true; }
+        seenBlockIds.add(b.id);
+      });
+    });
+    return changed;
   }
 
   async function deleteDayTemplateBlock(id){
@@ -2212,25 +2282,38 @@ export function initJamsPlansApp() {
     const end = document.getElementById("dt-end").value;
     const label = document.getElementById("dt-label").value.trim();
     const secondary = document.getElementById("dt-secondary").checked;
-    const objectiveId = document.getElementById("dt-objective").value || null;
+    const objectiveIds = getDtObjectiveIds();
     if (!start || !end || !label) return;
 
     // Le chevauchement entre créneaux est volontairement autorisé (ex : lire
-    // pendant un trajet) : pas de vérification de chevauchement ici.
+    // pendant un trajet) : pas de vérification de chevauchement ici. En
+    // revanche, le total des créneaux structurants (non superposés) d'une
+    // journée type ne doit jamais dépasser 24H.
+    if (!secondary){
+      const excludeId = editingDayTemplateBlockId || null;
+      const existingMin = templateTotalMinutesExcluding(activeTpl, excludeId);
+      const newMin = blockDurationMin(start, end);
+      if (existingMin + newMin > 1440){
+        showToast("24H atteint : impossible d'ajouter ce créneau, la journée type dépasserait 24 heures.", "error");
+        return;
+      }
+    }
 
     if (editingDayTemplateBlockId){
       const block = activeTpl.blocks.find(b=>b.id===editingDayTemplateBlockId);
-      if (block){ block.start = start; block.end = end; block.label = label; block.secondary = secondary; block.objective_id = objectiveId; }
+      if (block){ block.start = start; block.end = end; block.label = label; block.secondary = secondary; block.objective_ids = objectiveIds; delete block.objective_id; }
       cancelDayTemplateEdit();
     } else {
-      activeTpl.blocks.push({ id: nextId(), start, end, label, secondary, objective_id: objectiveId });
+      activeTpl.blocks.push({ id: nextId(), start, end, label, secondary, objective_ids: objectiveIds });
       // Auto-chaînage : la fin du bloc qu'on vient d'ajouter devient le début
-      // proposé pour le prochain, pour ne pas ressaisir l'heure à chaque fois.
+      // proposé pour le prochain, et la fin est initialisée à la même heure
+      // (plutôt que vide) pour ne pas ressaisir l'heure à chaque fois et que
+      // le champ ne "bouge" plus tant qu'on ne l'a pas changée soi-même.
       document.getElementById("dt-start").value = end;
-      document.getElementById("dt-end").value = "";
+      document.getElementById("dt-end").value = end;
       document.getElementById("dt-label").value = "";
       document.getElementById("dt-secondary").checked = false;
-      document.getElementById("dt-objective").value = "";
+      setDtObjectiveIds([]);
     }
     await saveDayTemplates();
     renderDayTemplate();
@@ -2261,8 +2344,8 @@ export function initJamsPlansApp() {
     // défaut" a été retiré) : dans ce cas, simplement pas de bloc structure.
     if (template){
       template.blocks.forEach(b=>{
-        const linkedObjective = b.objective_id ? state.objectives.find(o=>o.id===b.objective_id) : null;
-        items.push({ start: b.start, end: b.end, label: b.label, kind: "template", status: null, objectiveTitle: linkedObjective ? linkedObjective.title : null });
+        const linkedObjectivesText = getBlockLinkedObjectives(b).map(o=>o.title).join(" + ");
+        items.push({ start: b.start, end: b.end, label: b.label, kind: "template", status: null, objectiveTitle: linkedObjectivesText || null });
       });
     }
 
@@ -3472,6 +3555,7 @@ export function initJamsPlansApp() {
         // de perte), mais n'est plus jamais sélectionnée automatiquement.
         const loadedTemplates = loaded.profile.day_template;
         state.dayTemplates = Array.isArray(loadedTemplates) ? loadedTemplates : [];
+        if (dedupeDayTemplateIds()) saveDayTemplates();
         const todaysTpl = getTemplateForDate(todayISO());
         const datedTemplates = state.dayTemplates.filter(t=>t.period_start && t.period_end);
         state.activeDayTemplateId = todaysTpl ? todaysTpl.id : (datedTemplates[0] ? datedTemplates[0].id : null);
