@@ -2401,7 +2401,7 @@ export function initJamsPlansApp() {
         if (obj.target_date && dateStr > obj.target_date) return;
       }
       const log = state.dailyLogs.find(l=>l.routine_id===r.id && l.log_date===dateStr);
-      items.push({ start: r.start_time.slice(0,5), end: r.end_time.slice(0,5), label: r.label, kind: "routine", status: log ? log.status : null, hours: log ? log.actual_hours : null, planned: r.planned_hours, objective_id: r.objective_id || null });
+      items.push({ id: r.id, start: r.start_time.slice(0,5), end: r.end_time.slice(0,5), label: r.label, kind: "routine", status: log ? log.status : null, hours: log ? log.actual_hours : null, planned: r.planned_hours, objective_id: r.objective_id || null });
     });
 
     // Tâches d'agenda avec créneau, dont la plage de dates couvre ce jour.
@@ -2414,16 +2414,36 @@ export function initJamsPlansApp() {
     // Tâches sans horaire précis (agenda libre) : listées à part, en bas.
     const untimed = state.agendaTasks.filter(t=> dateStr >= t.start_date && dateStr <= t.end_date && !(t.planning_start && t.planning_end));
 
+    // Routines de ce jour de semaine liées à un objectif, MÊME sans horaire
+    // propre (ex : le mardi c'est "cardio", le jeudi "haut du corps", pour le
+    // même objectif "+5 KG de masse") : elles ne s'affichent jamais seules
+    // ici (cette page ne montre que des créneaux à horaire fixe), mais
+    // servent à retrouver le détail réel du jour pour un bloc de journée type
+    // rattaché au même objectif — même quand les horaires ne coïncident pas.
+    const weekdayObjectiveRoutines = state.routines.filter(r=>r.day_of_week === dow && r.objective_id).map(r=>{
+      const obj = state.objectives.find(o=>o.id===r.objective_id);
+      if (obj){
+        if (obj.start_date && dateStr < obj.start_date) return null;
+        if (obj.target_date && dateStr > obj.target_date) return null;
+      }
+      const log = state.dailyLogs.find(l=>l.routine_id===r.id && l.log_date===dateStr);
+      return { id: r.id, label: r.label, objective_id: r.objective_id, status: log ? log.status : null, hours: log ? log.actual_hours : null, planned: r.planned_hours };
+    }).filter(Boolean);
+
     // Fusion des doublons : un bloc de journée type et une routine/tâche
     // d'agenda qui occupent exactement le même horaire (ex : bloc "lire"
     // 08:10-08:40 + routine "Lire 30P" 08:10-08:40 liée à l'objectif "Lire
     // 30 pages/j") représentent la même chose réelle — plutôt que deux
     // lignes séparées, une seule ligne montre l'élément de journée type,
     // l'objectif concerné à côté, et le détail réel du jour (statut/heures)
-    // à la place du simple tag "structure".
+    // à la place du simple tag "structure". Si aucun horaire ne coïncide mais
+    // que le bloc est déjà rattaché à un objectif, on va quand même chercher
+    // la routine de ce jour de semaine pour ce même objectif (weekdayMatch),
+    // pour afficher le même niveau de détail.
     const templateItems = items.filter(it=>it.kind === "template");
     const otherItems = items.filter(it=>it.kind !== "template");
     const usedOther = new Set();
+    const usedRoutineIds = new Set();
     const displayItems = templateItems.map(tpl=>{
       const matchIdx = otherItems.findIndex((o,i)=>!usedOther.has(i) && o.start === tpl.start && o.end === tpl.end);
       const objIds = new Set(tpl.blockObjectiveIds || []);
@@ -2432,17 +2452,24 @@ export function initJamsPlansApp() {
         usedOther.add(matchIdx);
         match = otherItems[matchIdx];
         if (match.objective_id) objIds.add(match.objective_id);
+        if (match.kind === "routine" && match.id) usedRoutineIds.add(match.id);
       }
+      let weekdayMatch = null;
+      if (!match && objIds.size > 0){
+        weekdayMatch = weekdayObjectiveRoutines.find(r=>!usedRoutineIds.has(r.id) && objIds.has(r.objective_id)) || null;
+        if (weekdayMatch) usedRoutineIds.add(weekdayMatch.id);
+      }
+      const effectiveMatch = match || weekdayMatch;
       const objectiveTitles = Array.from(objIds).map(id=>state.objectives.find(o=>o.id===id)).filter(Boolean).map(o=>o.title);
       return {
         start: tpl.start, end: tpl.end, secondary: tpl.secondary, isStructural: true,
         label: tpl.label,
-        matchedLabel: match && match.label !== tpl.label ? match.label : null,
+        matchedLabel: effectiveMatch && effectiveMatch.label !== tpl.label ? effectiveMatch.label : null,
         objectiveTitles,
-        hasRealTracking: !!match,
-        status: match ? match.status : null,
-        hours: match ? match.hours : null,
-        planned: match ? match.planned : null,
+        hasRealTracking: !!effectiveMatch,
+        status: effectiveMatch ? effectiveMatch.status : null,
+        hours: effectiveMatch ? effectiveMatch.hours : null,
+        planned: effectiveMatch ? effectiveMatch.planned : null,
         isPrayer: match ? match.isPrayer : false,
       };
     }).concat(
@@ -2789,6 +2816,7 @@ export function initJamsPlansApp() {
           <input type="text" class="excuse-other-input mono" placeholder="Précise la raison" style="display:none; margin-top:6px; width:100%;" />
         </div>
         <button class="btn savebtn">Enregistrer</button>
+        <button type="button" class="continue-btn edit-check-btn" style="display:none;">Modifier</button>
       `;
       if (isPrayer){
         const nameEl = card.querySelector(".prayer-name-open");
@@ -2833,6 +2861,26 @@ export function initJamsPlansApp() {
         });
       });
       const saveBtn = card.querySelector(".savebtn");
+      const editBtn = card.querySelector(".edit-check-btn");
+      // Une fois enregistré, le bloc se verrouille (statut, heures et
+      // exception ne peuvent plus être modifiés par erreur en scrollant) —
+      // seul le petit bouton "Modifier" permet de le rouvrir.
+      let locked = !!existing;
+      function applyLockState(){
+        card.classList.toggle("checkin-card-locked", locked);
+        card.querySelectorAll(".status-btn").forEach(b=>{ b.disabled = locked; });
+        const hoursInput = card.querySelector(".actual-hours");
+        if (hoursInput) hoursInput.disabled = locked;
+        excuseSelect.disabled = locked;
+        excuseOtherInput.disabled = locked;
+        saveBtn.style.display = locked ? "none" : "";
+        editBtn.style.display = locked ? "" : "none";
+      }
+      applyLockState();
+      editBtn.addEventListener("click", ()=>{
+        locked = false;
+        applyLockState();
+      });
       saveBtn.addEventListener("click", async ()=>{
         const actual = parseFloat(card.querySelector(".actual-hours").value) || 0;
         const excuseValue = excuseSelect.value;
@@ -2868,6 +2916,8 @@ export function initJamsPlansApp() {
         saveBtn.classList.add("saved");
         if (navigator.vibrate) navigator.vibrate(15);
         setTimeout(()=>{ saveBtn.textContent = "Enregistrer"; saveBtn.classList.remove("saved"); }, 1500);
+        locked = true;
+        applyLockState();
         renderCheckinSummary(items, date);
         renderDashboard();
       });
