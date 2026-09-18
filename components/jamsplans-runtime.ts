@@ -2056,6 +2056,7 @@ export function initJamsPlansApp() {
       return `<div class="dt-period-item">
         <button type="button" class="pill${active}" data-tpl-id="${t.id}">${escapeHtml(t.name)} <span class="muted" style="font-size:10.5px;">(${detailText})</span></button>
         <button type="button" class="dt-period-edit-btn" data-tpl-id="${t.id}" title="Modifier cette période">✎</button>
+        <button type="button" class="dt-period-duplicate-btn" data-tpl-id="${t.id}" title="Dupliquer cette période">⧉</button>
         <button type="button" class="dt-period-delete-btn" data-tpl-id="${t.id}" title="Supprimer cette période">✕</button>
       </div>`;
     }).join("") + `<button type="button" id="new-period-btn" class="pill pill-new">+ Nouvelle période</button>`;
@@ -2086,6 +2087,32 @@ export function initJamsPlansApp() {
         document.getElementById("new-period-form").style.display = "flex";
         document.getElementById("new-period-btn").classList.add("active");
         document.getElementById("np-name").focus();
+      });
+    });
+    // Bouton "⧉" : duplique la période (nom + "(copie)", nouvel id, et
+    // chaque bloc reçoit aussi un nouvel id pour ne jamais entrer en
+    // collision avec l'original). Pratique pour une nouvelle saison : on
+    // duplique l'ancienne période, on la renomme et on ajuste juste ce qui
+    // change, au lieu de tout ressaisir. La copie s'ouvre directement en
+    // mode modification pour renommer/ajuster les dates tout de suite.
+    wrap.querySelectorAll(".dt-period-duplicate-btn").forEach(btn=>{
+      btn.addEventListener("click", async ()=>{
+        const tpl = state.dayTemplates.find(t=>t.id===btn.dataset.tplId);
+        if (!tpl) return;
+        const copy = {
+          ...tpl,
+          id: nextId(),
+          name: `${tpl.name} (copie)`,
+          weekdays: Array.isArray(tpl.weekdays) ? [...tpl.weekdays] : [],
+          blocks: (tpl.blocks || []).map(b=>({ ...b, id: nextId(), objective_ids: Array.isArray(b.objective_ids) ? [...b.objective_ids] : [] })),
+        };
+        state.dayTemplates.push(copy);
+        state.activeDayTemplateId = copy.id;
+        await saveDayTemplates();
+        renderDayTemplate();
+        // Ouvre directement le formulaire de période en mode modification,
+        // pré-rempli avec la copie, pour renommer et ajuster les dates.
+        document.querySelector(`.dt-period-edit-btn[data-tpl-id="${copy.id}"]`)?.click();
       });
     });
     // Bouton "✕" : supprime définitivement la période (et ses plages
@@ -2344,7 +2371,7 @@ export function initJamsPlansApp() {
     // défaut" a été retiré) : dans ce cas, simplement pas de bloc structure.
     if (template){
       template.blocks.forEach(b=>{
-        items.push({ start: b.start, end: b.end, label: b.label, kind: "template", status: null, secondary: !!b.secondary });
+        items.push({ start: b.start, end: b.end, label: b.label, kind: "template", status: null, secondary: !!b.secondary, blockObjectiveIds: getBlockObjectiveIds(b) });
       });
     }
 
@@ -2357,37 +2384,77 @@ export function initJamsPlansApp() {
         if (obj.target_date && dateStr > obj.target_date) return;
       }
       const log = state.dailyLogs.find(l=>l.routine_id===r.id && l.log_date===dateStr);
-      items.push({ start: r.start_time.slice(0,5), end: r.end_time.slice(0,5), label: r.label, kind: "routine", status: log ? log.status : null, hours: log ? log.actual_hours : null, planned: r.planned_hours });
+      items.push({ start: r.start_time.slice(0,5), end: r.end_time.slice(0,5), label: r.label, kind: "routine", status: log ? log.status : null, hours: log ? log.actual_hours : null, planned: r.planned_hours, objective_id: r.objective_id || null });
     });
 
     // Tâches d'agenda avec créneau, dont la plage de dates couvre ce jour.
     state.agendaTasks.filter(t=> dateStr >= t.start_date && dateStr <= t.end_date && t.planning_start && t.planning_end).forEach(t=>{
       const log = state.dailyLogs.find(l=>l.agenda_task_id===t.id && l.log_date===dateStr);
       const isPrayer = (t.label||"").startsWith(PRAYER_LABEL_PREFIX);
-      items.push({ start: t.planning_start.slice(0,5), end: t.planning_end.slice(0,5), label: t.label, kind: "agenda", status: log ? log.status : null, hours: log ? log.actual_hours : null, planned: t.planned_hours, isPrayer });
+      items.push({ start: t.planning_start.slice(0,5), end: t.planning_end.slice(0,5), label: t.label, kind: "agenda", status: log ? log.status : null, hours: log ? log.actual_hours : null, planned: t.planned_hours, isPrayer, objective_id: t.objective_id || null });
     });
 
     // Tâches sans horaire précis (agenda libre) : listées à part, en bas.
     const untimed = state.agendaTasks.filter(t=> dateStr >= t.start_date && dateStr <= t.end_date && !(t.planning_start && t.planning_end));
 
-    items.sort((a,b)=>timeToMinutes(a.start)-timeToMinutes(b.start));
+    // Fusion des doublons : un bloc de journée type et une routine/tâche
+    // d'agenda qui occupent exactement le même horaire (ex : bloc "lire"
+    // 08:10-08:40 + routine "Lire 30P" 08:10-08:40 liée à l'objectif "Lire
+    // 30 pages/j") représentent la même chose réelle — plutôt que deux
+    // lignes séparées, une seule ligne montre l'élément de journée type,
+    // l'objectif concerné à côté, et le détail réel du jour (statut/heures)
+    // à la place du simple tag "structure".
+    const templateItems = items.filter(it=>it.kind === "template");
+    const otherItems = items.filter(it=>it.kind !== "template");
+    const usedOther = new Set();
+    const displayItems = templateItems.map(tpl=>{
+      const matchIdx = otherItems.findIndex((o,i)=>!usedOther.has(i) && o.start === tpl.start && o.end === tpl.end);
+      const objIds = new Set(tpl.blockObjectiveIds || []);
+      let match = null;
+      if (matchIdx !== -1){
+        usedOther.add(matchIdx);
+        match = otherItems[matchIdx];
+        if (match.objective_id) objIds.add(match.objective_id);
+      }
+      const objectiveTitles = Array.from(objIds).map(id=>state.objectives.find(o=>o.id===id)).filter(Boolean).map(o=>o.title);
+      return {
+        start: tpl.start, end: tpl.end, secondary: tpl.secondary, isStructural: true,
+        label: tpl.label,
+        matchedLabel: match && match.label !== tpl.label ? match.label : null,
+        objectiveTitles,
+        hasRealTracking: !!match,
+        status: match ? match.status : null,
+        hours: match ? match.hours : null,
+        planned: match ? match.planned : null,
+        isPrayer: match ? match.isPrayer : false,
+      };
+    }).concat(
+      otherItems.filter((o,i)=>!usedOther.has(i)).map(o=>({ ...o, isStructural: false, secondary: false, objectiveTitles: [], hasRealTracking: true }))
+    );
 
-    const rowsHtml = items.map(it=>{
+    displayItems.sort((a,b)=>timeToMinutes(a.start)-timeToMinutes(b.start));
+
+    const rowsHtml = displayItems.map(it=>{
       const statusKey = it.status || "none";
-      const swatchColor = it.kind === "template" ? categoryColor(it.label) : "var(--violet)";
-      const hoursText = it.hours !== null && it.hours !== undefined ? ` · ${it.hours}h/${it.planned}h` : "";
+      const swatchColor = it.isStructural ? categoryColor(it.label) : "var(--violet)";
+      const showStatus = !it.isStructural || it.hasRealTracking;
+      const hoursText = showStatus && it.hours !== null && it.hours !== undefined ? ` · ${it.hours}h/${it.planned}h` : "";
+      const labelSuffix = it.matchedLabel ? ` · ${escapeHtml(it.matchedLabel)}` : "";
+      const objectiveTag = it.objectiveTitles && it.objectiveTitles.length
+        ? ` <span class="muted" style="font-size:10.5px;">· ${escapeHtml(it.objectiveTitles.join(" + "))}</span>`
+        : "";
       // Même repère "⤷ superposé" que dans la légende de "Journée type",
       // pour reconnaître d'un coup d'œil ce qui n'est pas compté dans les 24H.
-      const secondaryBadge = it.kind === "template" && it.secondary
+      const secondaryBadge = it.secondary
         ? '<span class="dt-secondary-badge" title="Chevauche un autre créneau">⤷ superposé</span>'
         : "";
       return `
         <div class="dc-item">
           <span class="dc-swatch" style="background:${swatchColor};"></span>
           <span class="dc-time">${it.isPrayer ? it.start : `${it.start}–${it.end}`}</span>
-          <span class="dc-label">${escapeHtml(it.label)}${it.kind !== "template" ? hoursText : ""}</span>
+          <span class="dc-label">${escapeHtml(it.label)}${labelSuffix}${hoursText}${objectiveTag}</span>
           ${secondaryBadge}
-          ${it.kind !== "template" ? `<span class="dc-status ${statusKey}">${statusLabel(it.status)}</span>` : `<span class="dc-status none">structure</span>`}
+          ${showStatus ? `<span class="dc-status ${statusKey}">${statusLabel(it.status)}</span>` : `<span class="dc-status none">structure</span>`}
         </div>
       `;
     }).join("");
@@ -2401,7 +2468,7 @@ export function initJamsPlansApp() {
       }).join("")}
     ` : "";
 
-    const ringHtml = renderDayConsultRing(items, dateStr);
+    const ringHtml = renderDayConsultRing(displayItems, dateStr);
 
     result.innerHTML = `
       <p class="label">${template ? `Journée type appliquée : ${escapeHtml(template.name)}` : "Aucune journée type ne couvre cette date."}</p>
@@ -2427,8 +2494,8 @@ export function initJamsPlansApp() {
     const size = 260, cx = 130, cy = 130, r = 88, sw = 20;
     const C = 2 * Math.PI * r;
 
-    const primaryItems = items.filter(it=>it.kind === "template" && !it.secondary);
-    const secondaryItems = items.filter(it=>!(it.kind === "template" && !it.secondary));
+    const primaryItems = items.filter(it=>it.isStructural && !it.secondary);
+    const secondaryItems = items.filter(it=>!(it.isStructural && !it.secondary));
 
     const toSegments = (list)=>{
       const segs = [];
@@ -2453,6 +2520,10 @@ export function initJamsPlansApp() {
     };
 
     const segments = toSegments(primaryItems);
+    // Même total que dans "Journée type" : les heures occupées par les
+    // éléments structurants (hors superposés), sur 24h.
+    const totalMin = segments.reduce((sum, seg)=>sum + seg.lenMin, 0);
+    const totalHours = Math.round((totalMin/60)*10)/10;
     const segmentsHtml = segments.map(seg=>{
       const startFrac = seg.startMin/1440;
       const arcLen = (seg.lenMin/1440)*C;
@@ -2477,7 +2548,7 @@ export function initJamsPlansApp() {
       return `<circle cx="${cx}" cy="${cy}" r="${rSecondary}" fill="none" stroke="${colorFor(seg.it)}" stroke-width="${swSecondary}"
         stroke-dasharray="${arcLen} ${CSecondary-arcLen}" stroke-dashoffset="${dashoffset}"
         transform="rotate(-90 ${cx} ${cy})">
-        <title>${escapeHtml(seg.it.label)} (${seg.it.start} à ${seg.it.end})${seg.it.kind === "template" ? " — superposé" : ""}</title>
+        <title>${escapeHtml(seg.it.label)} (${seg.it.start} à ${seg.it.end})${seg.it.isStructural ? " — superposé" : ""}</title>
       </circle>`;
     }).join("");
 
@@ -2505,7 +2576,9 @@ export function initJamsPlansApp() {
           ${secondaryRingBase}
           ${secondarySegmentsHtml}
           ${ticksHtml}
-          <text x="${cx}" y="${cy}" text-anchor="middle" font-size="15" font-family="'IBM Plex Mono',monospace" fill="var(--ink)">${dayLabel}</text>
+          <text x="${cx}" y="${cy-24}" text-anchor="middle" font-size="12" font-family="'IBM Plex Mono',monospace" fill="var(--muted)">${dayLabel}</text>
+          <text x="${cx}" y="${cy+2}" text-anchor="middle" font-size="20" font-family="'IBM Plex Mono',monospace" fill="var(--ink)">${totalHours}h</text>
+          <text x="${cx}" y="${cy+22}" text-anchor="middle" font-size="10" fill="var(--muted)">occupées / 24h</text>
         </svg>
       </div>
     `;
