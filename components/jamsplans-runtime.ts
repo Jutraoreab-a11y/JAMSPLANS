@@ -543,11 +543,10 @@ export function initJamsPlansApp() {
     const advice = await fetchWeatherAdvice(state.prayerCity);
     if (advice){
       weatherTipDate = today;
-      // Pas de phrase (journée calme) -> rien à afficher du tout, plutôt
-      // qu'un message de remplissage sans intérêt.
-      box.innerHTML = advice.sentence
-        ? `<span style="font-size:18px; vertical-align:middle;">${advice.icon}</span> <strong class="mono">${advice.tempC}°C</strong> ${escapeHtml(advice.sentence)}`
-        : "";
+      // Le degré s'affiche toujours ; le conseil (pluie, chaud, froid...) ne
+      // s'ajoute que s'il y a vraiment quelque chose à signaler.
+      box.innerHTML = `<span style="font-size:18px; vertical-align:middle;">${advice.icon}</span> <strong class="mono">${advice.tempC}°C</strong>`
+        + (advice.sentence ? ` ${escapeHtml(advice.sentence)}` : "");
     }
   }
 
