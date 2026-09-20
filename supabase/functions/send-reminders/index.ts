@@ -123,9 +123,12 @@ Deno.serve(async () => {
       const remaining = await countUnfinishedTasks(profile.id, date, dayOfWeek);
       if (remaining <= 0) { results[profile.id] = "rien à faire, pas d'envoi"; continue; }
 
+      // Message motivant plutôt qu'un simple constat : on rappelle
+      // explicitement d'aller cocher ses objectifs dans la check-liste,
+      // avec un ton encourageant plutôt qu'une notification froide.
       const message = remaining === 1
-        ? "JamsPlans : il te reste 1 tâche à valider aujourd'hui."
-        : `JamsPlans : il te reste ${remaining} tâches à valider aujourd'hui.`;
+        ? "Il te reste 1 objectif à cocher aujourd'hui. Encore un petit effort : ouvre ta check-liste JamsPlans et boucle-le avant la fin de la journée — tu es plus proche du but que tu ne le crois."
+        : `Il te reste ${remaining} objectifs à cocher aujourd'hui. Chaque case cochée compte : ouvre ta check-liste JamsPlans et termine ta journée en beauté.`;
 
       let email: string | null = null;
       try {
