@@ -3522,7 +3522,7 @@ export function initJamsPlansApp() {
     }
 
     if (!msg.textContent){
-      msg.textContent = "Rappel enregistré (navigateur + Make.com, par mail).";
+      msg.textContent = "Rappel enregistré (par mail, via Make.com).";
       msg.classList.add("success");
     }
   });
