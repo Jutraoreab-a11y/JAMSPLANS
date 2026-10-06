@@ -340,6 +340,30 @@ from public.daily_logs dl;
 --  créées juste avant.)
 
 -- ---------------------------------------------------------
+-- PRIÈRES : une seule tâche d'agenda par (utilisateur, jour, prière)
+-- ---------------------------------------------------------
+-- 1. Supprime les doublons existants en gardant, pour chaque prière, la ligne
+--    qui a déjà des check-ins (sinon la plus ancienne).
+-- 2. Empêche leur retour : un second INSERT identique est refusé par la base
+--    (l'app l'ignore proprement).
+delete from public.agenda_tasks a
+using (
+  select t.id,
+         row_number() over (
+           partition by t.user_id, t.start_date, t.label
+           order by (select count(*) from public.daily_logs l where l.agenda_task_id = t.id) desc,
+                    t.created_at asc, t.id
+         ) as rn
+  from public.agenda_tasks t
+  where t.label like '🕌 %'
+) d
+where a.id = d.id and d.rn > 1;
+
+create unique index if not exists agenda_tasks_prayer_unique
+  on public.agenda_tasks (user_id, start_date, label)
+  where label like '🕌 %';
+
+-- ---------------------------------------------------------
 -- CRON : déclenche send-reminders toutes les minutes
 -- ---------------------------------------------------------
 -- 1. Dans Supabase : Database > Extensions, activez "pg_cron" et "pg_net".

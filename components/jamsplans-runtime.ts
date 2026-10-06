@@ -373,6 +373,15 @@ export function initJamsPlansApp() {
     const m = Math.round((total - h) * 60);
     return m >= 60 ? { h: h + 1, m: 0 } : { h, m };
   }
+  // Affichage lisible d'une durée décimale : 0.02 -> "1 min", 0.75 -> "45 min",
+  // 1.0833 -> "1h05", 2 -> "2h". Évite d'afficher "0.02h" pour une tâche d'1 min.
+  function formatHours(totalHours){
+    const { h, m } = hoursToHM(totalHours);
+    if (h === 0 && m === 0) return "0h";
+    if (h === 0) return `${m} min`;
+    if (m === 0) return `${h}h`;
+    return `${h}h${String(m).padStart(2, "0")}`;
+  }
 
   // =========================================================
   // HORAIRES DE PRIÈRE — calculés via l'API publique Aladhan (gratuite, sans
@@ -425,7 +434,21 @@ export function initJamsPlansApp() {
   // l'utilisateur, à partir de sa ville choisie dans Profil. Idempotent : si
   // les 5 tâches du jour existent déjà, ne refait pas l'appel API. Appelée
   // au chargement de l'app et juste après l'enregistrement d'une ville.
-  async function syncPrayerTimesForToday(){
+  // Un seul calcul à la fois : l'app appelle cette fonction au chargement ET
+  // après l'enregistrement de la ville (voire deux fois de suite si on clique
+  // vite) — sans ce verrou, deux appels simultanés voyaient tous les deux
+  // "prière manquante" et créaient chacun leur ligne -> doublons.
+  let prayerSyncInFlight = null;
+  function syncPrayerTimesForToday(){
+    if (prayerSyncInFlight) return prayerSyncInFlight;
+    prayerSyncInFlight = (async ()=>{
+      try { await doSyncPrayerTimesForToday(); }
+      finally { prayerSyncInFlight = null; }
+    })();
+    return prayerSyncInFlight;
+  }
+
+  async function doSyncPrayerTimesForToday(){
     if (!state.prayerEnabled || !state.prayerCity) return;
     const today = todayISO();
     const already = state.agendaTasks.filter(t=>t.start_date===today && (t.label||"").startsWith(PRAYER_LABEL_PREFIX));
@@ -444,6 +467,9 @@ export function initJamsPlansApp() {
     for (const name of missingNames){
       const start = timings[name];
       if (!start) continue;
+      // Re-vérifie juste avant d'insérer : une autre session a pu créer cette
+      // prière pendant l'appel réseau ci-dessus.
+      if (state.agendaTasks.some(t=>t.start_date===today && t.label===PRAYER_LABEL_PREFIX+name)) continue;
       const draft = {
         start_date: today, end_date: today, label: PRAYER_LABEL_PREFIX + name,
         objective_id: null, is_priority: false,
@@ -461,9 +487,45 @@ export function initJamsPlansApp() {
         state.agendaTasks.push({ id: nextId(), ...draft });
       }
     }
+    await dedupePrayerTasks();
     renderAgenda();
     renderCheckin();
     renderPrayerTimesToday();
+  }
+
+  // Filet de sécurité : s'il existe déjà des doublons (même prière, même jour)
+  // — créés avant le verrou ci-dessus, ou par deux appareils ouverts en même
+  // temps — on n'en garde qu'un seul. On garde en priorité celui qui a déjà
+  // un check-in (le plus avancé : Fait à l'heure > Fait > Pas fait), sinon le
+  // premier. Les autres sont supprimés de la base (best-effort) et de l'écran.
+  async function dedupePrayerTasks(){
+    const groups = new Map();
+    state.agendaTasks.forEach(t=>{
+      if (!(t.label||"").startsWith(PRAYER_LABEL_PREFIX)) return;
+      const key = t.start_date + "|" + t.label;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(t);
+    });
+    const statusRank = { done: 3, partial: 2, not_done: 1 };
+    const score = (t)=>{
+      const log = state.dailyLogs.find(l=>l.agenda_task_id===t.id);
+      return log ? 10 + (statusRank[log.status] || 0) : 0;
+    };
+    const toRemove = [];
+    groups.forEach(list=>{
+      if (list.length < 2) return;
+      const sorted = [...list].sort((a,b)=>score(b)-score(a)); // tri stable : à égalité, le premier reste
+      toRemove.push(...sorted.slice(1));
+    });
+    if (toRemove.length === 0) return false;
+    for (const t of toRemove){
+      if (SUPABASE_CONFIGURED){
+        try { await db.deleteAgendaTask(t.id); } catch(e){ /* sera retenté au prochain chargement */ }
+      }
+      state.agendaTasks = state.agendaTasks.filter(x=>x.id!==t.id);
+      state.dailyLogs = state.dailyLogs.filter(l=>l.agenda_task_id!==t.id);
+    }
+    return true;
   }
 
   // =========================================================
@@ -1024,7 +1086,7 @@ export function initJamsPlansApp() {
               <div class="hours-input">
                 <input id="continue-obj-hours" type="number" min="0" step="1" value="${objHM.h}" />
                 <span class="muted" style="font-size:12px;">h</span>
-                <input id="continue-obj-minutes" type="number" min="0" max="59" step="5" value="${objHM.m}" />
+                <input id="continue-obj-minutes" type="number" min="0" max="59" step="1" value="${objHM.m}" />
                 <span class="muted" style="font-size:12px;">min /sem</span>
               </div>
             </div>
@@ -1200,7 +1262,7 @@ export function initJamsPlansApp() {
         const slotText = t.planning_start && t.planning_end ? ` · ${t.planning_start}–${t.planning_end}` : "";
         // Pour une prière, l'heure est mise juste devant le nom : "🕌 Fajr : 06:30".
         const displayLabel = (isPrayer && t.planning_start) ? `${t.label} : ${t.planning_start}` : t.label;
-        const metaText = isPrayer ? rangeText : `${t.planned_hours}h${rangeText}${slotText}`;
+        const metaText = isPrayer ? rangeText : `${formatHours(t.planned_hours)}${rangeText}${slotText}`;
         return `
           <div class="agenda-item">
             <div>
@@ -1270,7 +1332,7 @@ export function initJamsPlansApp() {
           <div style="display:flex; align-items:flex-start; justify-content:space-between; width:100%;">
             <div style="flex:1;">
               <div class="obj-title">${escapeHtml(obj.title)}<span class="cat-badge" style="background:${categoryColor(obj.category || "Autre")};">${escapeHtml(obj.category || "Autre")}</span>${obj.is_monthly ? '<span class="cat-badge" style="background:var(--violet-soft); color:var(--violet);">mensuel</span>' : ""}${isOngoing ? '<span class="cat-badge" style="background:var(--violet-soft); color:var(--violet);">tous les jours</span>' : ""}${obj.achieved ? '<span class="achieved-badge">atteint</span>' : ""}</div>
-              <div class="obj-meta">${obj.is_monthly ? "Objectif mensuel (coché le dernier jour du mois)" : `${obj.weekly_hours_target}h / semaine`}${dateRangeText ? " · "+dateRangeText : ""}</div>
+              <div class="obj-meta">${obj.is_monthly ? "Objectif mensuel (coché le dernier jour du mois)" : `${formatHours(obj.weekly_hours_target)} / semaine`}${dateRangeText ? " · "+dateRangeText : ""}</div>
               ${progressHtml}
               ${historyHtml}
             </div>
@@ -1477,7 +1539,7 @@ export function initJamsPlansApp() {
         li.innerHTML = `
           <div>
             <div class="obj-title">${escapeHtml(obj.title)}<span class="cat-badge" style="background:${categoryColor(obj.category || "Autre")};">${escapeHtml(obj.category || "Autre")}</span><span class="achieved-badge">atteint</span></div>
-            <div class="obj-meta">${obj.is_monthly ? "Objectif mensuel" : `${obj.weekly_hours_target}h / semaine`}${dateRangeText ? " · "+dateRangeText : ""}</div>
+            <div class="obj-meta">${obj.is_monthly ? "Objectif mensuel" : `${formatHours(obj.weekly_hours_target)} / semaine`}${dateRangeText ? " · "+dateRangeText : ""}</div>
             ${obj.is_monthly ? "" : objectiveProgressHtml(obj)}
           </div>
           <div style="display:flex; gap:12px;">
@@ -1512,7 +1574,7 @@ export function initJamsPlansApp() {
         li.innerHTML = `
           <div>
             <div class="obj-title">${escapeHtml(obj.title)}<span class="cat-badge" style="background:${categoryColor(obj.category || "Autre")};">${escapeHtml(obj.category || "Autre")}</span><span class="priority-badge" style="color:var(--red); border-color:var(--red);">échec</span></div>
-            <div class="obj-meta">${obj.is_monthly ? "Objectif mensuel" : `${obj.weekly_hours_target}h / semaine`} · ${obj.target_date && obj.target_date < today ? `échéance dépassée (${formatDateFr(obj.target_date)})` : "marqué en échec"}</div>
+            <div class="obj-meta">${obj.is_monthly ? "Objectif mensuel" : `${formatHours(obj.weekly_hours_target)} / semaine`} · ${obj.target_date && obj.target_date < today ? `échéance dépassée (${formatDateFr(obj.target_date)})` : "marqué en échec"}</div>
             ${obj.is_monthly ? "" : objectiveProgressHtml(obj)}
           </div>
           <div style="display:flex; gap:12px;">
@@ -1569,7 +1631,7 @@ export function initJamsPlansApp() {
         <label class="field-label" for="routine-hours">Durée</label>
         <div class="hours-input">
           <input id="routine-hours" type="number" min="0" step="1" value="2" /><span class="muted" style="font-size:12px;">h</span>
-          <input id="routine-minutes" type="number" min="0" max="59" step="5" value="0" /><span class="muted" style="font-size:12px;">min</span>
+          <input id="routine-minutes" type="number" min="0" max="59" step="1" value="0" /><span class="muted" style="font-size:12px;">min</span>
         </div>
       </div>
       <div>
@@ -1644,7 +1706,7 @@ export function initJamsPlansApp() {
       dayRoutines.forEach(r=>{
         const li = document.createElement("li");
         const timeText = r.start_time && r.end_time ? ` · ${r.start_time.slice(0,5)}–${r.end_time.slice(0,5)}` : "";
-        li.innerHTML = `<span>${escapeHtml(r.label)} <span class="muted">· ${r.planned_hours}h${timeText}</span>${r.is_priority ? '<span class="priority-badge">Prioritaire</span>' : ""}</span>`;
+        li.innerHTML = `<span>${escapeHtml(r.label)} <span class="muted">· ${formatHours(r.planned_hours)}${timeText}</span>${r.is_priority ? '<span class="priority-badge">Prioritaire</span>' : ""}</span>`;
         const actions = document.createElement("span");
         actions.style.display = "flex";
         actions.style.gap = "10px";
@@ -2694,7 +2756,7 @@ export function initJamsPlansApp() {
           <div class="checkin-summary-track"><div class="checkin-summary-fill" style="width:${pctTasks}%; background:linear-gradient(90deg,#4C8FD6,#4CAF6D);"></div></div>
         </div>
         <div>
-          <div class="checkin-summary-bar-label"><span>Heures réalisées</span><span>${totalActual.toFixed(1)}h / ${totalPlanned.toFixed(1)}h</span></div>
+          <div class="checkin-summary-bar-label"><span>Heures réalisées</span><span>${formatHours(totalActual)} / ${formatHours(totalPlanned)}</span></div>
           <div class="checkin-summary-track"><div class="checkin-summary-fill" style="width:${pctHours}%; background:linear-gradient(90deg,#A48CE8,#4CAF6D);"></div></div>
         </div>
       </div>
@@ -2809,7 +2871,7 @@ export function initJamsPlansApp() {
           <strong style="font-size:14px;">${isPrayer
             ? `<span class="prayer-name-open" style="cursor:pointer; text-decoration:underline dotted;" title="Voir le calendrier de cette prière">${escapeHtml(displayLabel)}</span>`
             : escapeHtml(displayLabel)}<span class="cat-badge" style="background:${categoryColor(cat)};">${escapeHtml(cat)}</span>${item.is_priority ? '<span class="priority-badge">Prioritaire</span>' : ""}</strong>
-          ${isPrayer ? "" : `<span class="mono muted" style="font-size:12px;">${item.planned_hours}h prévues</span>`}
+          ${isPrayer ? "" : `<span class="mono muted" style="font-size:12px;">${formatHours(item.planned_hours)} prévues</span>`}
         </div>
         <div class="status-row">
           <button class="status-btn" data-status="done">${isPrayer ? "Fait à l'heure" : "Fait"}</button>
@@ -2818,8 +2880,8 @@ export function initJamsPlansApp() {
         </div>
         <div style="margin-top:10px; display:flex; align-items:center; gap:8px; ${isPrayer ? "display:none;" : ""}">
           <label class="muted" style="font-size:12px;">Heures réalisées</label>
-          <input type="number" min="0" step="0.25" class="actual-hours mono" style="width:80px;" value="${existing ? existing.actual_hours : item.planned_hours}" />
-          <span class="muted" style="font-size:12px;">/ ${item.planned_hours}h</span>
+          <input type="number" min="0" step="0.01" class="actual-hours mono" style="width:80px;" value="${existing ? existing.actual_hours : item.planned_hours}" />
+          <span class="muted" style="font-size:12px;">/ ${formatHours(item.planned_hours)}</span>
         </div>
         <div class="excuse-block" style="margin-top:8px; ${isPrayer ? "display:none;" : ""}">
           <label class="muted" style="font-size:12px;">Exception</label>
@@ -3738,6 +3800,7 @@ export function initJamsPlansApp() {
       state.routines = loaded.routines;
       state.agendaTasks = loaded.agendaTasks;
       state.dailyLogs = loaded.dailyLogs;
+      await dedupePrayerTasks();
       if (loaded.profile){
         state.profile.firstName = loaded.profile.first_name || state.profile.firstName;
         state.reminder.enabled = !!loaded.profile.reminder_enabled;
