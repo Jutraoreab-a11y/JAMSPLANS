@@ -42,6 +42,10 @@ export function initJamsPlansApp() {
         supabaseClient.from("daily_logs").select("*").eq("user_id", userId).order("log_date", { ascending:false }),
         supabaseClient.from("profiles").select("*").eq("id", userId).maybeSingle(),
       ]);
+      // Si les objectifs ne se chargent pas, on s'arrête net plutôt que de
+      // continuer avec une liste vide (ce qui ferait croire que tous les
+      // objectifs ont disparu et déclencherait le nettoyage des références).
+      if (objRes.error) throw objRes.error;
       return {
         objectives: (objRes.data || []).map(mapObjectiveFromDb),
         routines: routRes.data || [],
@@ -84,6 +88,11 @@ export function initJamsPlansApp() {
     },
     async deleteAgendaTask(id){
       const { error } = await supabaseClient.from("agenda_tasks").delete().eq("id", id);
+      if (error) throw error;
+    },
+    async deleteDailyLogs(ids){
+      if (!ids.length) return;
+      const { error } = await supabaseClient.from("daily_logs").delete().in("id", ids);
       if (error) throw error;
     },
     async upsertDailyLog(userId, payload, existingId){
@@ -943,13 +952,34 @@ export function initJamsPlansApp() {
       const existing = state.objectives.find(o=>o.id===editingObjectiveId);
       if (!existing) { resetObjectiveForm(); return; }
       const patch = { title, category, start_date: startDate || null, target_date: date || null, weekly_hours_target: hours, is_monthly: isMonthly };
+
+      // Le nom et la catégorie se mettent à jour partout tout seuls (chaque
+      // écran relit l'objectif). Pour la période, les jours qui sortent de la
+      // nouvelle fenêtre ne doivent plus porter cet objectif : on retire leurs
+      // check-ins (routines ET tâches d'agenda rattachées). Les jours qui
+      // entrent dans la fenêtre l'affichent automatiquement.
+      const agendaIdsOfObjective = new Set(state.agendaTasks.filter(t=>t.objective_id===existing.id).map(t=>t.id));
+      const logsOutside = state.dailyLogs.filter(l=>
+        (l.objective_id===existing.id || (l.agenda_task_id && agendaIdsOfObjective.has(l.agenda_task_id))) &&
+        ((patch.start_date && l.log_date < patch.start_date) || (patch.target_date && l.log_date > patch.target_date))
+      );
+      if (logsOutside.length > 0){
+        const ok = window.confirm("Cette nouvelle période laisse " + logsOutside.length + " check-in" + (logsOutside.length>1?"s":"") + " en dehors de ses dates. Ils seront supprimés de ces jours-là (l'objectif n'y apparaîtra plus). Continuer ?");
+        if (!ok) return;
+      }
+
       if (SUPABASE_CONFIGURED){
         try {
           const updated = await db.updateObjective(editingObjectiveId, mapObjectiveToDb({ ...existing, ...patch }));
           Object.assign(existing, updated);
+          await db.deleteDailyLogs(logsOutside.map(l=>l.id));
         } catch(err){ showToast("Erreur lors de la modification : " + err.message, "error"); return; }
       } else {
         Object.assign(existing, patch);
+      }
+      if (logsOutside.length > 0){
+        const outsideIds = new Set(logsOutside.map(l=>l.id));
+        state.dailyLogs = state.dailyLogs.filter(l=>!outsideIds.has(l.id));
       }
       resetObjectiveForm();
       renderAll();
@@ -971,14 +1001,73 @@ export function initJamsPlansApp() {
     renderPlanning();
   });
 
+  // Retire des blocs de TOUTES les journées types les objectifs qui n'existent
+  // plus dans Target. Le bloc (le créneau horaire) reste, simplement sans
+  // l'objectif. Retourne true si quelque chose a changé (à sauvegarder).
+  function stripDeadObjectivesFromDayTemplates(){
+    const valid = new Set(state.objectives.map(o=>o.id));
+    let changed = false;
+    state.dayTemplates.forEach(tpl=>{
+      (tpl.blocks || []).forEach(b=>{
+        const ids = getBlockObjectiveIds(b);
+        const kept = ids.filter(oid=>valid.has(oid));
+        if (kept.length !== ids.length){
+          b.objective_ids = kept;
+          delete b.objective_id;
+          changed = true;
+        }
+      });
+    });
+    return changed;
+  }
+
+  // Filet de sécurité : plus aucune routine, tâche d'agenda, check-in ou bloc
+  // de journée type ne doit pointer vers un objectif absent de Target (ce
+  // serait un objectif "fantôme" affiché sur certains jours). Appelé au
+  // chargement. Ne touche à rien si la liste d'objectifs est vide (cas d'une
+  // session expirée qui renvoie des listes vides sans erreur).
+  async function purgeOrphanObjectiveRefs(){
+    if (state.objectives.length === 0) return;
+    const valid = new Set(state.objectives.map(o=>o.id));
+    state.routines = state.routines.filter(r=>!r.objective_id || valid.has(r.objective_id));
+    state.agendaTasks = state.agendaTasks.filter(t=>!t.objective_id || valid.has(t.objective_id));
+    state.dailyLogs = state.dailyLogs.filter(l=>!l.objective_id || valid.has(l.objective_id));
+    if (stripDeadObjectivesFromDayTemplates()) await saveDayTemplates();
+  }
+
   async function deleteObjective(id){
+    const obj = state.objectives.find(o=>o.id===id);
+    const linkedRoutines = state.routines.filter(r=>r.objective_id===id);
+    const linkedTasks = state.agendaTasks.filter(t=>t.objective_id===id);
+    const linkedTaskIds = new Set(linkedTasks.map(t=>t.id));
+    const linkedLogs = state.dailyLogs.filter(l=>l.objective_id===id || (l.agenda_task_id && linkedTaskIds.has(l.agenda_task_id)));
+
+    const parts = [];
+    if (linkedRoutines.length) parts.push(linkedRoutines.length + " routine" + (linkedRoutines.length>1?"s":""));
+    if (linkedTasks.length) parts.push(linkedTasks.length + " tâche" + (linkedTasks.length>1?"s":"") + " d'agenda");
+    if (linkedLogs.length) parts.push(linkedLogs.length + " check-in" + (linkedLogs.length>1?"s":""));
+    const detail = parts.length ? " Cela effacera aussi, sur tous les jours : " + parts.join(", ") + "." : "";
+    if (!window.confirm("Supprimer l'objectif « " + (obj ? obj.title : "") + " » ?" + detail)) return;
+
     if (SUPABASE_CONFIGURED){
-      try { await db.deleteObjective(id); }
-      catch(err){ showToast("Erreur lors de la suppression : " + err.message, "error"); return; }
+      try {
+        // Les routines et les check-ins de l'objectif partent avec lui (cascade
+        // côté base). Les tâches d'agenda, elles, seraient seulement détachées
+        // par la base : on les supprime explicitement juste après.
+        await db.deleteObjective(id);
+      } catch(err){ showToast("Erreur lors de la suppression : " + err.message, "error"); return; }
+      for (const t of linkedTasks){
+        try { await db.deleteAgendaTask(t.id); }
+        catch(err){ showToast("Objectif supprimé, mais une tâche d'agenda liée n'a pas pu l'être : " + err.message, "error"); }
+      }
     }
     state.objectives = state.objectives.filter(o=>o.id!==id);
     state.routines = state.routines.filter(r=>r.objective_id!==id);
-    if (state.selectedPlanningObjective === id) state.selectedPlanningObjective = null;
+    state.agendaTasks = state.agendaTasks.filter(t=>t.objective_id!==id);
+    state.dailyLogs = state.dailyLogs.filter(l=>!(l.objective_id===id || (l.agenda_task_id && linkedTaskIds.has(l.agenda_task_id))));
+    if (state.selectedPlanningObjective === id) state.selectedPlanningObjective = state.objectives[0]?.id || null;
+    if (state.selectedDashboardObjective === id) state.selectedDashboardObjective = "all";
+    if (stripDeadObjectivesFromDayTemplates()) await saveDayTemplates();
     renderAll();
   }
 
@@ -3631,6 +3720,14 @@ export function initJamsPlansApp() {
     renderCheckin();
     renderDashboard();
     renderProfile();
+    // Si "Consulter un jour" est ouvert, on le recalcule aussi : sinon il
+    // continuerait d'afficher l'ancien nom / l'ancienne période d'un objectif
+    // qu'on vient de modifier ou de supprimer.
+    const consultPanel = document.getElementById("day-consult-panel");
+    if (consultPanel && consultPanel.style.display === "block"){
+      const consultDate = document.getElementById("day-consult-date");
+      renderDayConsult((consultDate && consultDate.value) || todayISO());
+    }
   }
 
   // =========================================================
@@ -3824,6 +3921,7 @@ export function initJamsPlansApp() {
         const datedTemplates = state.dayTemplates.filter(t=>t.period_start && t.period_end);
         state.activeDayTemplateId = todaysTpl ? todaysTpl.id : (datedTemplates[0] ? datedTemplates[0].id : null);
       }
+      await purgeOrphanObjectiveRefs();
       state.selectedPlanningObjective = state.objectives[0]?.id || null;
     } catch(err){
       showToast("Erreur lors du chargement des données : " + err.message, "error");
