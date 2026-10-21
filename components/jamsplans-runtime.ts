@@ -998,7 +998,7 @@ export function initJamsPlansApp() {
     }
 
     resetObjectiveForm();
-    renderPlanning();
+    renderAll();
   });
 
   // Retire des blocs de TOUTES les journées types les objectifs qui n'existent
@@ -2356,12 +2356,54 @@ export function initJamsPlansApp() {
     setDtObjectiveIds(currentIds);
   }
 
+  // Objectifs "Tous les jours" = sans date de fin (case cochée dans Target),
+  // non atteints, hors objectifs mensuels (cochés 1x/mois). Ils n'ont pas
+  // d'horaire propre : on les liste donc dans la journée type, sur chaque jour
+  // de la période, plutôt que de les coller sur un créneau au hasard. La liste
+  // est recalculée à chaque affichage : un objectif créé (ou déjà existant)
+  // y figure automatiquement, sans rien à ressaisir.
+  function isEveryDayObjective(o){
+    return !o.achieved && !o.target_date && !o.is_monthly;
+  }
+  function everyDayObjectivesOnDate(dateStr){
+    return state.objectives.filter(o=>isEveryDayObjective(o) && (!o.start_date || o.start_date <= dateStr));
+  }
+  function everyDayObjectivesForTemplate(tpl){
+    // Une période datée (non récurrente) a une fin : un objectif qui ne
+    // commence qu'après ne la concerne pas.
+    const periodEnd = tpl && tpl.period_end && !tpl.recurring_yearly ? tpl.period_end : null;
+    return state.objectives.filter(o=>isEveryDayObjective(o) && (!periodEnd || !o.start_date || o.start_date <= periodEnd));
+  }
+  function renderDayTemplateEveryDay(){
+    const legend = document.getElementById("day-template-legend");
+    if (!legend) return;
+    let box = document.getElementById("day-template-everyday");
+    if (!box){
+      box = document.createElement("div");
+      box.id = "day-template-everyday";
+      legend.insertAdjacentElement("afterend", box);
+    }
+    const list = everyDayObjectivesForTemplate(getActiveTemplate());
+    if (list.length === 0){ box.innerHTML = ""; return; }
+    box.innerHTML = `
+      <p class="label" style="margin:14px 0 6px;">Objectifs de tous les jours</p>
+      ${list.map(o=>`
+        <div class="dt-legend-item">
+          <span class="dt-swatch" style="background:${categoryColor(o.category || "Autre")};"></span>
+          <span>${escapeHtml(o.title)}</span>
+          <span class="mono muted">${o.weekly_hours_target ? formatHours(o.weekly_hours_target) + " / sem" : ""}</span>
+        </div>
+      `).join("")}
+    `;
+  }
+
   function renderDayTemplate(){
     populateDtObjectiveSelect();
     renderDayTemplatePeriods();
     renderDayTemplateRing();
     renderDayTemplateProgress();
     renderDayTemplateLegend();
+    renderDayTemplateEveryDay();
   }
 
   async function saveDayTemplates(){
@@ -2679,12 +2721,19 @@ export function initJamsPlansApp() {
       }).join("")}
     ` : "";
 
+    const everyDayList = everyDayObjectivesOnDate(dateStr);
+    const everyDayHtml = everyDayList.length > 0 ? `
+      <p class="label" style="margin-top:14px;">Objectifs de tous les jours</p>
+      ${everyDayList.map(o=>`<div class="dc-item"><span class="dc-swatch" style="background:${categoryColor(o.category || "Autre")};"></span><span class="dc-label">${escapeHtml(o.title)}</span></div>`).join("")}
+    ` : "";
+
     const ringHtml = renderDayConsultRing(displayItems, dateStr);
 
     result.innerHTML = `
       <p class="label">${template ? `Journée type appliquée : ${escapeHtml(template.name)}` : "Aucune journée type ne couvre cette date."}</p>
       ${ringHtml}
       ${rowsHtml || '<p class="muted" style="font-size:13px;">Rien de programmé à horaire fixe ce jour-là.</p>'}
+      ${everyDayHtml}
       ${untimedHtml}
     `;
   }
