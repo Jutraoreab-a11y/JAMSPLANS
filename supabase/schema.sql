@@ -166,6 +166,15 @@ alter table public.daily_logs drop constraint if exists daily_logs_agenda_task_i
 alter table public.daily_logs add constraint daily_logs_agenda_task_id_fkey
   foreign key (agenda_task_id) references public.agenda_tasks(id) on delete cascade;
 
+-- Suppression d'une routine qui a déjà des check-ins : l'ancienne règle
+-- "on delete set null" sur daily_logs.routine_id entrait en conflit avec la
+-- contrainte daily_logs_one_source (plus aucune source renseignée) et faisait
+-- échouer la suppression. L'app efface maintenant elle-même les check-ins
+-- d'abord ; cette règle rend la base cohérente aussi pour un appel direct.
+alter table public.daily_logs drop constraint if exists daily_logs_routine_id_fkey;
+alter table public.daily_logs add constraint daily_logs_routine_id_fkey
+  foreign key (routine_id) references public.routines(id) on delete cascade;
+
 -- ---------------------------------------------------------
 -- TABLE: profiles
 -- Infos de profil affichées dans l'onglet "Profil" (prénom uniquement —
@@ -185,7 +194,7 @@ create table if not exists public.profiles (
   reminder_channel_sms boolean not null default false,  -- rappel par SMS (case à cocher, indépendante du mail)
   timezone text not null default 'Europe/Paris',
   last_reminder_sent_date date,                         -- évite les doublons d'envoi le même jour
-  weekly_limits jsonb not null default '{}'::jsonb,     -- ex: { "Travail": 40, "Sport": 8 }
+  weekly_limits jsonb not null default '{}'::jsonb,     -- ex: { "Travail": 40, "Sport": 8 } ; la clé "__categories" y garde aussi les catégories créées par l'utilisateur
   day_template jsonb not null default '[]'::jsonb,      -- ex: [{ "start": "23:00", "end": "08:00", "label": "Sommeil" }, ...]
   prayer_city text,                                     -- ville choisie pour les horaires de prière (ex: 'Africa/Abidjan') ; vide = désactivé
   created_at timestamptz not null default now(),
