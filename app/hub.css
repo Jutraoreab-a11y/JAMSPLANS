@@ -80,3 +80,23 @@
 
 @media (max-width:520px){ .hub .hero{padding-top:26px;} .hub .card{padding:20px;} }
 @media (prefers-reduced-motion:reduce){ .hub *{transition:none !important;} }
+
+/* Connexion (un seul compte pour tous les modules) */
+.hub .session{display:flex; align-items:center; gap:10px; font-size:13px; color:var(--muted);}
+.hub .session b{color:var(--ink); font-weight:600; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.hub .linkbtn{background:none; border:1px solid var(--line); color:var(--ink); font:inherit; font-size:12.5px; padding:6px 12px; border-radius:999px; cursor:pointer;}
+.hub .linkbtn:hover{border-color:var(--violet); color:var(--violet);}
+.hub .login{max-width:440px; margin:0 0 26px; padding:22px; background:var(--card); border:1px solid var(--violet); border-radius:18px;}
+.hub .login h3{font-size:20px; margin-bottom:4px;}
+.hub .login p.sub{margin:0 0 14px; font-size:13.5px; color:var(--muted); line-height:1.5;}
+.hub .login form{display:flex; flex-direction:column; gap:10px;}
+.hub .login input{font:inherit; font-size:15px; padding:12px 14px; border-radius:10px; border:1px solid var(--line); background:var(--paper); color:var(--ink);}
+.hub .login input:focus{outline:2px solid var(--violet); outline-offset:1px;}
+.hub .login .go{font:inherit; font-weight:600; font-size:15px; padding:13px 16px; border-radius:12px; border:none; cursor:pointer; color:#fff; background:#5b47a8;}
+.hub .login .go:hover{background:#6b56bd;} .hub .login .go:disabled{opacity:.6; cursor:wait;}
+.hub .login .err{color:#E2685C; font-size:13px; min-height:1em; margin:0;}
+.hub .login .more{margin:12px 0 0; font-size:13px; color:var(--muted);}
+.hub .login .more a{color:var(--violet); text-decoration:underline;}
+.hub .card.locked{opacity:.72;}
+.hub .card.locked .icon::after{content:"🔒"; position:absolute; font-size:14px; transform:translate(20px,18px);}
+.hub .badge.lock{background:rgba(155,168,196,.14); color:var(--muted); border-color:var(--line);}

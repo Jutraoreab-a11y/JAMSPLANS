@@ -4,6 +4,23 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>JAMAL PERMIS — Quiz épreuve pratique</title>
+<script>
+/* Accès réservé aux personnes connectées : le compte (Supabase) est partagé par tous les modules.
+   Sans session enregistrée dans ce navigateur, on revient à « Mon espace » pour se connecter. */
+(function(){
+  var ok = false;
+  try {
+    for (var i = 0; i < localStorage.length; i++) {
+      var k = localStorage.key(i);
+      if (/^sb-.*-auth-token$/.test(k)) {
+        var v = JSON.parse(localStorage.getItem(k) || "null");
+        if (v && (v.access_token || v.refresh_token)) { ok = true; break; }
+      }
+    }
+  } catch (e) { ok = true; /* stockage inaccessible : on ne bloque pas */ }
+  if (!ok) location.replace("/?connexion=permis");
+})();
+</script>
 <style>
   :root { --bg:#fdf2f8; --card:#fff; --ink:#4a1d3d; --muted:#9d5a86; --accent:#ec4899; --ok:#10b981; --ko:#f43f5e; --line:#fbcfe8; --soft:#fce7f3; --lav:#f3e8ff; }
   * { box-sizing: border-box; }
