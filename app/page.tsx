@@ -12,9 +12,8 @@ const supabase = SUPABASE_URL && SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, 
 // Page d'accueil « Mon espace » : un bouton par module.
 //  - JamsPlans    -> /jamsplans   (app/jamsplans/page.tsx)
 //  - JAMAL PERMIS -> /permis      (public/permis.html, via rewrite dans next.config.js)
-//  - Langue       -> pas encore branché (message « bientôt »)
+//  - Langue       -> /langue      (public/langue.html, via rewrite dans next.config.js)
 // Un seul compte (Supabase, celui de JamsPlans) ouvre tous les modules : connecté = tout est débloqué.
-// Pour brancher Langue : remplacer son href="#langue" par le vrai lien.
 export default function Home() {
   const [today, setToday] = useState("");
   const [toast, setToast] = useState("");
@@ -38,7 +37,9 @@ export default function Home() {
       new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" })
     );
 
-    if (new URLSearchParams(search).get("connexion") === "permis") notify("Connecte-toi pour ouvrir JAMAL PERMIS.");
+    const wanted = new URLSearchParams(search).get("connexion");
+    if (wanted === "permis") notify("Connecte-toi pour ouvrir JAMAL PERMIS.");
+    if (wanted === "langue") notify("Connecte-toi pour ouvrir Langue.");
 
     if (!supabase) { setUser(null); return; } // Supabase non configuré : pas de compte possible
     let alive = true;
@@ -141,12 +142,12 @@ export default function Home() {
             <span className="btn">Commencer <span>→</span></span>
           </a>
 
-          <a className={"card c-langue" + (locked ? " locked" : "")} href="#langue" aria-label="Ouvrir Langue" onClick={(e) => soon(e, "Langue")}>
-            <span className="badge soon">Bientôt</span>
+          <a className={"card c-langue" + (locked ? " locked" : "")} href="/langue" aria-label="Ouvrir Langue" onClick={guard}>
+            <span className="badge">En ligne</span>
             <div className="icon">🌍</div>
             <h2>Langue</h2>
-            <p>Apprends une nouvelle langue pas à pas : vocabulaire, phrases utiles et pratique régulière pour tenir dans la durée.</p>
-            <div className="tags"><span className="tag">Vocabulaire</span><span className="tag">Phrases</span><span className="tag">Pratique</span></div>
+            <p>Apprends le vocabulaire en anglais, espagnol, mandarin et arabe : une question à la fois, avec correction et révision des mots ratés.</p>
+            <div className="tags"><span className="tag">Anglais</span><span className="tag">Espagnol</span><span className="tag">Mandarin</span><span className="tag">Arabe</span></div>
             <span className="btn">Commencer <span>→</span></span>
           </a>
 
