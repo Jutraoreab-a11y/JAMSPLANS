@@ -101,7 +101,7 @@ export default function Home() {
     setInfo("");
     if (!email.trim()) { setError("Écris ton adresse mail ci-dessus, puis clique sur « Mot de passe oublié »."); return; }
     if (!supabase) { setError("Connexion indisponible pour le moment."); return; }
-    const { error: err } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: window.location.origin });
+    const { error: err } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: window.location.origin + "/jamsplans" });
     if (err) setError(err.message);
     else setInfo("Si un compte existe pour cette adresse, un mail de réinitialisation vient d'être envoyé.");
   }

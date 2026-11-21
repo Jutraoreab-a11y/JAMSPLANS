@@ -20,6 +20,9 @@ export function initJamsPlansApp() {
   const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 
   const SUPABASE_CONFIGURED = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
+  // Lu avant que Supabase ne nettoie l'adresse : la personne arrive par un lien « mot de passe oublié ».
+  const INITIAL_HASH = typeof window !== "undefined" ? window.location.hash : "";
+  const RECOVERY_IN_URL = /type=recovery/.test(INITIAL_HASH);
 
   // persistSession: true -> l'utilisateur reste connecté entre deux visites.
   // (Dans le prototype.html original ceci était mis à false pour eviter le
@@ -4732,7 +4735,7 @@ export function initJamsPlansApp() {
     }
     try {
       const { error } = await supabaseClient.auth.resetPasswordForEmail(email, {
-        redirectTo: window.location.origin,
+        redirectTo: window.location.origin + "/jamsplans",
       });
       if (error) throw error;
       msg.textContent = "Si un compte existe pour cette adresse, un email de réinitialisation vient d'être envoyé.";
@@ -4743,26 +4746,48 @@ export function initJamsPlansApp() {
     }
   });
 
-  // Quand la personne clique sur le lien recu par email, Supabase la ramene
-  // ici avec un événement PASSWORD_RECOVERY : on lui demande alors directement
-  // son nouveau mot de passe via une simple invite, puis on l'enregistre.
+  // Quand la personne clique sur le lien recu par email, Supabase la ramene ici
+  // avec un événement PASSWORD_RECOVERY : on affiche alors un formulaire
+  // « nouveau mot de passe » dans l'écran de connexion, puis on l'enregistre.
+  let recoverySession = null;
+  function showRecoveryForm(session){
+    recoverySession = session;
+    document.getElementById("app-root").style.display = "none";
+    document.getElementById("auth-screen").style.display = "flex";
+    document.getElementById("auth-tabs").style.display = "none";
+    document.getElementById("auth-form").style.display = "none";
+    document.getElementById("auth-recovery-form").style.display = "flex";
+    document.getElementById("auth-new-password").focus();
+  }
+  function hideRecoveryForm(){
+    recoverySession = null;
+    document.getElementById("auth-tabs").style.display = "";
+    document.getElementById("auth-form").style.display = "";
+    document.getElementById("auth-recovery-form").style.display = "none";
+  }
   if (SUPABASE_CONFIGURED){
-    supabaseClient.auth.onAuthStateChange(async (event, session)=>{
-      if (event === "PASSWORD_RECOVERY" && session){
-        const newPassword = window.prompt("Choisissez votre nouveau mot de passe (6 caractères minimum) :");
-        if (!newPassword) return;
-        if (newPassword.length < 6){
-          showToast("Le nouveau mot de passe doit faire au moins 6 caractères.", "error");
-          return;
-        }
-        try {
-          const { error } = await supabaseClient.auth.updateUser({ password: newPassword });
-          if (error) throw error;
-          showToast("Mot de passe mis à jour. Vous êtes connecté.", "success");
-          await enterApp(session);
-        } catch(err){
-          showToast("Erreur lors de la mise à jour du mot de passe : " + err.message, "error");
-        }
+    supabaseClient.auth.onAuthStateChange((event, session)=>{
+      if (event === "PASSWORD_RECOVERY" && session) showRecoveryForm(session);
+    });
+    document.getElementById("auth-recovery-form").addEventListener("submit", async e=>{
+      e.preventDefault();
+      const msg = document.getElementById("auth-recovery-message");
+      msg.classList.remove("error", "success");
+      const p1 = document.getElementById("auth-new-password").value;
+      const p2 = document.getElementById("auth-new-password2").value;
+      if (p1.length < 6){ msg.textContent = "Le mot de passe doit faire au moins 6 caractères."; msg.classList.add("error"); return; }
+      if (p1 !== p2){ msg.textContent = "Les deux mots de passe ne sont pas identiques."; msg.classList.add("error"); return; }
+      try {
+        const { error } = await supabaseClient.auth.updateUser({ password: p1 });
+        if (error) throw error;
+        const session = recoverySession;
+        hideRecoveryForm();
+        document.getElementById("auth-recovery-form").reset();
+        showToast("Mot de passe mis à jour. Vous êtes connecté.", "success");
+        await enterApp(session);
+      } catch(err){
+        msg.textContent = "Erreur : " + err.message;
+        msg.classList.add("error");
       }
     });
   }
@@ -4853,6 +4878,18 @@ export function initJamsPlansApp() {
     }
     document.getElementById("app-root").style.display = "none";
     document.getElementById("auth-screen").style.display = "flex";
+    // Lien du mail expiré ou déjà utilisé : Supabase renvoie l'erreur dans l'adresse.
+    if (/error_code=|error_description=/.test(INITIAL_HASH)){
+      const msgEl = document.getElementById("auth-message");
+      msgEl.textContent = /otp_expired/.test(INITIAL_HASH)
+        ? "Ce lien a expiré ou a déjà été utilisé. Cliquez sur « Mot de passe oublié ? » pour recevoir un nouveau mail, puis ouvrez-le tout de suite."
+        : "Ce lien n'est plus valable. Demandez-en un nouveau avec « Mot de passe oublié ? ».";
+      msgEl.classList.add("error");
+      try { history.replaceState(null, "", window.location.pathname + window.location.search); } catch(_e){}
+      return;
+    }
+    // Arrivée par le lien « mot de passe oublié » : on attend le nouveau mot de passe avant d'entrer.
+    if (RECOVERY_IN_URL) return;
     const { data: { session } } = await supabaseClient.auth.getSession();
     if (session){
       await enterApp(session);
