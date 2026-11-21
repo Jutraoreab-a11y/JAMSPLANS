@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JAMAL PERMIS — Quiz épreuve pratique</title>
+<style>
+  :root { --bg:#fdf2f8; --card:#fff; --ink:#4a1d3d; --muted:#9d5a86; --accent:#ec4899; --ok:#10b981; --ko:#f43f5e; --line:#fbcfe8; --soft:#fce7f3; --lav:#f3e8ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--ink); }
+  main { max-width: 680px; margin: 0 auto; padding: 24px 16px 60px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; color:#be185d; }
+  h3 { margin: 18px 0 8px; color:#9d174d; }
+  .sub { color: var(--muted); margin: 0 0 20px; }
+  .hello { background: linear-gradient(135deg, #f9a8d4, #d8b4fe); color:#fff; border-radius:16px; padding:18px 20px; margin-bottom:18px; box-shadow: 0 6px 16px rgba(236,72,153,.25); }
+  .hello h2 { margin:0 0 6px; font-size:1.3rem; }
+  .hello p { margin:0; }
+  .hello .sign { text-align:right; font-style:italic; margin-top:8px; font-weight:600; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 20px; margin-bottom: 16px; box-shadow: 0 4px 14px rgba(236,72,153,.08); }
+  .btn { background: var(--accent); color:#fff; border:0; border-radius:10px; padding:10px 16px; font-size:1rem; cursor:pointer; margin:4px 4px 4px 0; box-shadow: 0 3px 8px rgba(236,72,153,.3); }
+  .btn.alt { background: var(--lav); color:#7e22ce; box-shadow:none; }
+  .btn:disabled { opacity:.5; cursor:not-allowed; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .themes { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 14px; }
+  .chip { display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:999px; border:2px solid transparent; cursor:pointer; font-size:.95rem; user-select:none; }
+  .chip input { margin:0; }
+  select { padding:6px 10px; border-radius:8px; border:1px solid var(--line); background:#fff; }
+  .theme-badge { display:inline-block; font-size:.85rem; font-weight:600; padding:2px 10px; border-radius:999px; margin-right:8px; vertical-align:middle; white-space:nowrap; }
+  .question { font-size:1.15rem; font-weight:600; line-height:1.4; margin: 0 0 14px; }
+  .option { display:block; width:100%; text-align:left; background:#fff; border:2px solid var(--line); border-radius:12px; padding:12px 14px; margin:8px 0; font-size:1rem; color:var(--ink); cursor:pointer; }
+  .option:hover:not(:disabled) { border-color:#f472b6; background: var(--soft); }
+  .option:disabled { cursor:default; }
+  .option.good { border-color: var(--ok); background:#d1fae5; }
+  .option.bad { border-color: var(--ko); background:#ffe4e6; }
+  .feedback { margin-top:14px; padding:12px 14px; border-radius:12px; background: var(--lav); }
+  .feedback.ok { background:#d1fae5; }
+  .feedback.ko { background:#ffe4e6; }
+  .encourage { margin-top:6px; font-style:italic; }
+  .progress { height:8px; background:var(--soft); border-radius:999px; overflow:hidden; margin-bottom:14px; }
+  .progress > div { height:100%; background: linear-gradient(90deg, #f472b6, #c084fc); width:0; transition: width .2s; }
+  .score-big { font-size:2.4rem; font-weight:700; color:#be185d; }
+  table { width:100%; border-collapse: collapse; font-size:.95rem; }
+  th, td { text-align:left; padding:8px; border-bottom:1px solid var(--line); vertical-align: top; }
+  th { color:#9d174d; }
+  .tag-ok { color:var(--ok); font-weight:600; }
+  .tag-ko { color:var(--ko); font-weight:600; }
+  .back-espace { display:inline-block; margin:0 0 14px; color:#be185d; text-decoration:none; font-weight:600; font-size:.95rem; }
+  .back-espace:hover { text-decoration:underline; }
+  .hidden { display:none; }
+  .qicon { text-align:center; margin: 4px 0 12px; }
+  .qicon svg { width: 150px; height: auto; color: #be185d; background:#fdf2f8; border-radius:14px; padding:8px; }
+</style>
+</head>
+<body>
+<main>
+  <a href="/" class="back-espace">← Mon espace</a>
+  <div class="hello">
+    <h2>Bonjour ma chérie 💖</h2>
+    <p>Bonne chance pour ton permis !</p>
+    <div class="sign">— Abdoulaye</div>
+  </div>
+  <h1>JAMAL PERMIS — Quiz épreuve pratique</h1>
+  <p class="sub">Choisis la bonne réponse parmi les propositions. Tu auras le corrigé après chaque question.</p>
+
+  <!-- ÉCRAN ACCUEIL -->
+  <section id="home" class="card">
+    <details>
+      <summary style="cursor:pointer;font-weight:600;color:#9d174d;margin-bottom:8px">Choisir les thématiques à réviser</summary>
+      <div id="themeChoices" class="themes"></div>
+    </details>
+    <div class="row">
+      <label>Nombre de questions :
+        <input type="number" id="count" min="1" max="200" value="10" style="width:90px;padding:6px 10px;border-radius:8px;border:1px solid var(--line)">
+      </label>
+    </div>
+    <p>
+      <button class="btn" id="startBtn">Commencer une session</button>
+      <button class="btn alt" id="resetBtn">Effacer l'historique</button>
+    </p>
+    <div id="progress" class="sub" style="margin-top:12px"></div>
+    <h3>Historique des sessions</h3>
+    <div id="history"></div>
+  </section>
+
+  <!-- ÉCRAN QUIZ -->
+  <section id="quiz" class="card hidden">
+    <div class="row" style="margin-bottom:10px">
+      <button class="btn alt" id="backQuizBtn">← Retour</button>
+    </div>
+    <div class="progress"><div id="bar"></div></div>
+    <div class="row" style="justify-content:space-between">
+      <span id="counter" class="sub"></span>
+      <span id="runScore" class="sub"></span>
+    </div>
+    <div id="qicon" class="qicon"></div>
+    <p class="question"><span id="themeBadge" class="theme-badge"></span><span id="question"></span></p>
+    <div id="options"></div>
+    <div id="feedback" class="feedback hidden"></div>
+    <button class="btn hidden" id="nextBtn">Question suivante</button>
+  </section>
+
+  <!-- ÉCRAN RÉSULTAT -->
+  <section id="result" class="card hidden">
+    <h2>Fin de la session</h2>
+    <div class="score-big" id="finalScore"></div>
+    <p id="finalMsg" class="sub"></p>
+    <h3>Score par thématique</h3>
+    <div id="themeScores"></div>
+    <h3>Corrigé</h3>
+    <table>
+      <thead><tr><th>#</th><th>Question</th><th>Ta réponse</th><th>Bonne réponse</th><th>Résultat</th></tr></thead>
+      <tbody id="review"></tbody>
+    </table>
+    <p>
+      <button class="btn" id="againBtn">Nouvelle session</button>
+      <button class="btn alt" id="backBtn">Accueil</button>
+    </p>
+  </section>
+</main>
+
+<script>
+/* =====================================================================
+   BANQUE DE QUESTIONS
+   Une ligne par question : { theme, q, a }
+   a = la bonne réponse. Les mauvaises réponses (1 ou 2 par question)
+   sont tirées automatiquement parmi les réponses des autres questions.
+   Pour imposer tes propres fausses réponses, ajoute : faux: ["...", "..."]
+   Les thèmes et leurs couleurs se mettent à jour tout seuls.
+   ===================================================================== */
+/* Questions de l'épreuve pratique, reformulées. La page source répète
+   plusieurs questions sous plusieurs numéros : elles ne figurent ici qu'une fois.
+   Les fausses réponses sont prises parmi les autres réponses du même thème. */
+const V = "Vérification", S = "Sécurité routière", P = "Premiers secours";
+const QUESTIONS = [
+  { theme: V, q: "Où se trouve la commande de réglage de hauteur des feux ?", a: "En général à gauche du volant." },
+  { theme: V, q: "Montrez le réglage du rétroviseur intérieur en mode nuit.", a: "Montrer le réglage automatique s'il existe ; une explication suffit." },
+  { theme: V, q: "Où se trouve la manette des essuie-glaces, en vitesse rapide ?", a: "La manette à droite de la colonne de direction." },
+  { theme: V, q: "Où se trouve le gilet haute visibilité ?", a: "Le montrer dans l'habitacle ; pas besoin de le sortir." },
+  { theme: V, q: "Où trouve-t-on le certificat d'immatriculation ?", a: "Généralement dans la boîte à gants ; une photocopie est acceptée." },
+  { theme: V, q: "Montrez la jauge de carburant.", a: "Indiquer la jauge sur le tableau de bord." },
+  { theme: V, q: "Montrez le témoin de dégivrage arrière.", a: "Indiquer le témoin ou le voyant lumineux." },
+  { theme: V, q: "Montrez le témoin de pression d'huile insuffisante.", a: "Mettre le contact et indiquer le voyant au tableau de bord." },
+  { theme: V, q: "Où se trouve l'éthylotest ?", a: "Généralement dans la boîte à gants ; il n'est plus obligatoire." },
+  { theme: V, q: "Montrez le réglage de la position du volant.", a: "Indiquer la commande, sans la modifier." },
+  { theme: V, q: "Montrez la commande d'air dirigé vers le pare-brise.", a: "Indiquer la commande de dégivrage." },
+  { theme: V, q: "Montrez le témoin de batterie.", a: "Mettre le contact et indiquer le voyant." },
+  { theme: V, q: "De quelle couleur est le témoin du système de freinage ?", a: "Rouge ; mettre le contact et indiquer le voyant." },
+  { theme: V, q: "Montrez le témoin de température du liquide de refroidissement.", a: "Mettre le contact et indiquer le voyant." },
+  { theme: V, q: "Montrez le témoin de porte mal fermée.", a: "Indiquer le voyant." },
+  { theme: V, q: "Montrez la commande des feux de détresse.", a: "Indiquer la commande." },
+  { theme: V, q: "Montrez la commande du régulateur de vitesse.", a: "Indiquer la commande." },
+  { theme: V, q: "Montrez le klaxon sans le faire retentir.", a: "Indiquer la commande." },
+  { theme: V, q: "Quand faut-il désactiver l'airbag passager ?", a: "Quand un enfant est installé dans un siège orienté vers l'arrière, à l'avant." },
+  { theme: V, q: "Montrez le témoin de ceinture non bouclée du conducteur.", a: "Indiquer le voyant." },
+  { theme: V, q: "Où se trouvent le certificat d'assurance et la vignette pare-brise ?", a: "Généralement dans la boîte à gants." },
+  { theme: V, q: "De quelle couleur est le témoin des feux de brouillard arrière ?", a: "Orange." },
+  { theme: V, q: "Montrez le réglage de la hauteur de l'appui-tête conducteur.", a: "Indiquer le réglage." },
+  { theme: V, q: "Montrez la commande de recyclage d'air.", a: "Indiquer la commande." },
+  { theme: V, q: "Montrez le témoin des feux de route.", a: "Indiquer le témoin." },
+  { theme: V, q: "Où trouve-t-on le constat amiable ?", a: "Généralement dans la boîte à gants." },
+  { theme: V, q: "Montrez la commande du limiteur de vitesse, si le véhicule en est équipé.", a: "Indiquer la commande." },
+  { theme: V, q: "Montrez la commande de l'essuie-glace arrière.", a: "Indiquer la commande." },
+  { theme: V, q: "Où sont les ancrages ISOFIX ?", a: "Les montrer ; tous les sièges enfant ne s'y fixent pas." },
+  { theme: V, q: "Montrez le témoin de pression des pneus basse.", a: "Indiquer le voyant." },
+  { theme: V, q: "Montrez les gicleurs du lave-glace avant.", a: "Les indiquer." },
+  { theme: V, q: "Où faire l'appoint de liquide lave-glace ?", a: "Ouvrir le capot et montrer le réservoir." },
+  { theme: V, q: "Que vérifier sur le flanc d'un pneu ?", a: "Ni déchirure ni boursouflure ; signaler tout dommage." },
+  { theme: V, q: "Que vérifier sur les plaques d'immatriculation ?", a: "À l'avant et à l'arrière, propres, lisibles et non endommagées." },
+  { theme: V, q: "Où vérifier le niveau de liquide de frein ?", a: "Entre les repères min et max ; l'aide pour ouvrir le capot est permise." },
+  { theme: V, q: "Que vérifier sur les balais d'essuie-glace ?", a: "Les prendre en main et les contrôler un par un." },
+  { theme: V, q: "Où faire l'appoint de liquide de refroidissement ?", a: "Montrer le bouchon ou le vase d'expansion." },
+  { theme: V, q: "Que vérifier sur les clignotants côté trottoir ?", a: "Propres, fonctionnels, signaler toute panne." },
+  { theme: V, q: "Que vérifier sur le feu de brouillard arrière ?", a: "Allumé, propre et fonctionnel." },
+  { theme: V, q: "Que vérifier sur les feux de détresse avant et arrière ?", a: "Allumés, propres et fonctionnels." },
+  { theme: V, q: "Que vérifier sur les feux de route ?", a: "Allumés, propres et fonctionnels." },
+  { theme: V, q: "Que vérifier sur les feux de croisement ?", a: "Allumés, propres et fonctionnels." },
+  { theme: V, q: "Où vérifier le niveau d'huile moteur ?", a: "Montrer la jauge ; aucune manipulation nécessaire." },
+  { theme: V, q: "Où est la batterie ?", a: "Ouvrir le capot et la montrer." },
+  { theme: V, q: "Que vérifier sur les réflecteurs ?", a: "Propres et intacts ; signaler toute anomalie." },
+  { theme: V, q: "Que vérifier sur les feux de position avant et arrière ?", a: "Propres et fonctionnels." },
+  { theme: V, q: "Où voit-on l'indicateur d'usure des pneus ?", a: "Montrer le repère sur le flanc du pneu." },
+  { theme: V, q: "Où se trouve la trappe et le bouchon du carburant ?", a: "Montrer la trappe et vérifier que le bouchon est bien fermé." },
+  { theme: V, q: "Où faire l'appoint d'huile moteur ?", a: "Ouvrir le capot et montrer le bouchon de remplissage." },
+  { theme: V, q: "Où se trouve l'ampoule de feu avant à remplacer ?", a: "Montrer l'emplacement." },
+  { theme: V, q: "Que vérifier sur les feux de jour ?", a: "Propres et fonctionnels." },
+  { theme: V, q: "Le triangle de présignalisation est-il présent ?", a: "Montrer son emplacement." },
+  { theme: V, q: "Où remplace-t-on une ampoule arrière ?", a: "Dans le coffre." },
+  { theme: V, q: "Que vérifier sur le feu de plaque arrière ?", a: "Fonctionnel, propre et lisible." },
+  { theme: V, q: "Que vérifier sur l'ouverture du coffre ?", a: "Montrer qu'il est bien verrouillé." },
+  { theme: V, q: "Que vérifier sur le verrouillage du capot ?", a: "Montrer le loquet." },
+  { theme: V, q: "Montrez la sécurité enfant sur une porte arrière.", a: "Indiquer la commande." },
+  { theme: V, q: "Avec de l'aide, que vérifier sur les feux de marche arrière ?", a: "Demander au moniteur d'enclencher la marche arrière ; feux propres et fonctionnels." },
+  { theme: V, q: "Avec de l'aide, que vérifier sur les feux stop ?", a: "Demander au moniteur d'appuyer sur la pédale de frein ; feux propres et fonctionnels." },
+
+  { theme: S, q: "Pourquoi régler correctement la hauteur des feux ?", a: "Pour ne pas éblouir les autres usagers." },
+  { theme: S, q: "Pourquoi utiliser un liquide lave-glace hiver ?", a: "Pour éviter qu'il gèle." },
+  { theme: S, q: "À quoi sert le mode nuit du rétroviseur ?", a: "Éviter l'éblouissement des véhicules qui suivent." },
+  { theme: S, q: "Où trouver les pressions de gonflage recommandées ?", a: "Sur la plaque de la portière, dans le manuel ou sur la trappe de carburant." },
+  { theme: S, q: "Comment détecter des balais d'essuie-glace usés ?", a: "Ils laissent des traces sur le pare-brise, surtout sous la pluie." },
+  { theme: S, q: "Quelle précaution avec un porte-vélos ?", a: "Garder la plaque et les feux visibles." },
+  { theme: S, q: "Quel autre accessoire est obligatoire après une panne ?", a: "Le triangle de présignalisation." },
+  { theme: S, q: "Quelle conséquence d'un niveau insuffisant de liquide de frein ?", a: "Une efficacité de freinage réduite." },
+  { theme: S, q: "Quels deux autres documents présenter à un contrôle ?", a: "Le certificat d'assurance et le permis de conduire." },
+  { theme: S, q: "Quel risque avec des balais défectueux ?", a: "Une visibilité réduite par mauvais temps." },
+  { theme: S, q: "Quelles précautions au ravitaillement ?", a: "Couper le moteur, ne pas fumer, ne pas utiliser son téléphone." },
+  { theme: S, q: "Quel danger à faire l'appoint de liquide de refroidissement moteur chaud ?", a: "Risque de brûlures." },
+  { theme: S, q: "Quelle conséquence d'un dégivrage arrière défaillant ?", a: "Une visibilité arrière réduite, voire nulle." },
+  { theme: S, q: "Qu'indique un clignotant qui clignote plus vite ?", a: "Une ampoule est grillée." },
+  { theme: S, q: "Quelles conditions pour vérifier le niveau d'huile ?", a: "Moteur froid et véhicule sur sol plat." },
+  { theme: S, q: "Quand utiliser les feux de brouillard arrière ?", a: "Par brouillard et par neige." },
+  { theme: S, q: "Quel taux d'alcool pour un conducteur probatoire ?", a: "0,2 g/l, soit pratiquement zéro verre." },
+  { theme: S, q: "Quand utiliser les feux de détresse ?", a: "En panne, en cas d'accident ou de fort ralentissement." },
+  { theme: S, q: "Citez un usage des appels de phares.", a: "Signaler son approche, avertir d'un danger ou remplacer le klaxon." },
+  { theme: S, q: "Citez deux éléments pour un dégivrage efficace.", a: "La vitesse du ventilateur, l'air chaud ou la climatisation." },
+  { theme: S, q: "Quel est le risque principal d'un manque d'huile moteur ?", a: "La détérioration ou la casse du moteur." },
+  { theme: S, q: "Quel risque à laisser les feux de route allumés en croisant ?", a: "Éblouir les autres usagers." },
+  { theme: S, q: "Quelle conséquence d'un réglage incorrect des feux de croisement ?", a: "Mauvaise vision vers l'avant et éblouissement des autres." },
+  { theme: S, q: "Qu'est-ce qui vide la batterie moteur coupé ?", a: "Des feux ou accessoires laissés allumés." },
+  { theme: S, q: "Comment démarrer si la batterie est HS sans déplacer le véhicule ?", a: "Démarrer avec une batterie d'appoint, ou remplacer la batterie." },
+  { theme: S, q: "Quel risque à rouler frein à main non complètement desserré ?", a: "Détérioration du système de freinage." },
+  { theme: S, q: "Quelle conséquence d'une température de refroidissement trop élevée ?", a: "Surchauffe ou grippage du moteur." },
+  { theme: S, q: "Quelle distance de visibilité par temps clair ?", a: "150 m." },
+  { theme: S, q: "Comment empêcher les enfants d'ouvrir les portes arrière ?", a: "Activer la sécurité enfant sur les deux portes arrière." },
+  { theme: S, q: "Peut-on ouvrir une porte arrière de l'extérieur, sécurité enfant activée ?", a: "Oui." },
+  { theme: S, q: "Peut-on utiliser les feux de brouillard arrière sous forte pluie ?", a: "Non." },
+  { theme: S, q: "Quel risque avec un capot mal fermé en roulant ?", a: "Il peut s'ouvrir et provoquer un accident." },
+  { theme: S, q: "Comment désactiver rapidement le régulateur de vitesse ?", a: "Appuyer sur la pédale de frein ou d'embrayage." },
+  { theme: S, q: "Quel risque avec le recyclage d'air prolongé ?", a: "Buée sur les vitres et visibilité réduite." },
+  { theme: S, q: "Quel risque sans lave-glace ?", a: "Une mauvaise visibilité." },
+  { theme: S, q: "Quel est le but des feux de jour ?", a: "Rendre le véhicule plus visible de jour." },
+  { theme: S, q: "Quel risque avec un feu stop défaillant ?", a: "Les suivants n'ont pas l'avertissement, d'où un risque de collision." },
+  { theme: S, q: "Quelle conséquence d'un feu arrière de position défaillant ?", a: "Mauvaise visibilité pour les autres et risque de collision." },
+  { theme: S, q: "Quelle différence entre un témoin rouge et un témoin orange ?", a: "Rouge : panne ou danger ; orange : élément à surveiller." },
+  { theme: S, q: "Quel délai pour envoyer le constat à l'assureur ?", a: "5 jours." },
+  { theme: S, q: "Quel est le rôle de l'appui-tête ?", a: "Limiter le mouvement de la tête et les blessures en cas de choc." },
+  { theme: S, q: "Quand peut-on utiliser le klaxon en ville ?", a: "Seulement en cas de danger immédiat." },
+  { theme: S, q: "Quelles conséquences d'une panne des feux de croisement ?", a: "Mauvaise visibilité et risque d'être confondu avec un deux-roues." },
+  { theme: S, q: "À partir de quel âge un enfant peut-il s'asseoir à l'avant ?", a: "10 ans." },
+  { theme: S, q: "Que faire avec une charge lourde dans le coffre ?", a: "Augmenter la pression des pneus et régler la hauteur des feux." },
+  { theme: S, q: "Quand vérifier la pression des pneus ?", a: "Chaque mois et avant un long trajet." },
+  { theme: S, q: "Quel risque avec des objets sur la tablette arrière ?", a: "Une visibilité arrière réduite et des projectiles en cas de freinage ou de choc." },
+  { theme: S, q: "À quoi sert le verrou de sécurité du capot ?", a: "Empêcher l'ouverture du capot en roulant s'il est mal verrouillé." },
+
+  { theme: P, q: "Que faire pour une victime inconsciente qui respire ?", a: "La placer en position latérale de sécurité, appeler les secours et surveiller sa respiration." },
+  { theme: P, q: "Comment arrêter un saignement ?", a: "Exercer une pression ferme avec les doigts ou la paume et couvrir la plaie avec un linge propre." },
+  { theme: P, q: "Où placer le triangle hors autoroute ?", a: "À environ 30 m de l'accident ou du véhicule, ou avant un virage ou une côte." },
+  { theme: P, q: "Pourquoi commencer le massage cardiaque immédiatement ?", a: "Les lésions cérébrales commencent en quelques minutes." },
+  { theme: P, q: "Qu'est-ce qu'un défibrillateur (DAE) ?", a: "Un appareil qui peut rétablir un rythme cardiaque normal en cas d'arrêt cardiaque." },
+  { theme: P, q: "Que faire en entendant l'alerte SAIP ?", a: "Se mettre à l'abri et suivre les médias officiels et les consignes." },
+  { theme: P, q: "Que contient le signal de sirène SAIP ?", a: "Un signal national répété en trois cycles, puis un signal continu de fin d'alerte." },
+  { theme: P, q: "Quels sont les numéros d'urgence ?", a: "18 (pompiers), 15 (SAMU), 112 (numéro européen)." },
+  { theme: P, q: "Comment vérifier la respiration d'une victime ?", a: "Observer les mouvements du thorax et de l'abdomen et sentir l'air expiré." },
+  { theme: P, q: "Où placer la victime pour une évacuation d'urgence ?", a: "Loin du danger." },
+  { theme: P, q: "Que porter avant de sortir du véhicule après une panne ou un accident ?", a: "Le gilet haute visibilité." },
+  { theme: P, q: "Quand peut-on déplacer une victime ?", a: "Seulement en cas de danger réel, immédiat et incontrôlable." },
+  { theme: P, q: "Quelles trois informations donner aux secours ?", a: "Le numéro de téléphone de l'appelant, le type de problème et la localisation précise." },
+  { theme: P, q: "Comment alerter les secours ?", a: "Par téléphone portable, ou par téléphone fixe ou borne d'appel d'urgence si pas de portable." },
+  { theme: P, q: "Sur autoroute, comment localiser un accident par téléphone ?", a: "Donner le numéro de l'autoroute, le sens de circulation et la borne kilométrique." },
+  { theme: P, q: "Qu'est-ce que la perte de connaissance ?", a: "La personne ne répond pas et ne réagit pas, mais elle respire." },
+  { theme: P, q: "Comment protéger une zone d'accident ?", a: "Matérialiser une zone de danger large et bien visible." },
+  { theme: P, q: "Quels risques pour une personne inconsciente sur le dos ?", a: "Arrêt respiratoire et arrêt cardiaque." },
+  { theme: P, q: "Pourquoi ne pas laisser une victime inconsciente sur le dos ?", a: "Risque d'étouffement par des liquides, la langue pouvant retomber." },
+  { theme: P, q: "Quels sont les signes d'un arrêt cardiaque ?", a: "Pas de réaction, pas de respiration ou respiration anormale." },
+  { theme: P, q: "Qu'est-ce qu'un arrêt cardiaque ?", a: "Le cœur s'arrête ou bat de façon anarchique." },
+  { theme: P, q: "Un défibrillateur peut-il nuire à une victime qui n'est pas en arrêt cardiaque ?", a: "Non, il ne se déclenche que pour un arrêt cardiaque." },
+  { theme: P, q: "Quelles trois façons de vérifier la conscience ?", a: "Poser des questions simples, secouer doucement les épaules, demander de serrer la main." },
+  { theme: P, q: "Quels risques d'une hémorragie grave ?", a: "Un choc circulatoire ou un arrêt cardiaque." },
+  { theme: P, q: "Quand terminer l'appel aux secours ?", a: "Seulement quand le régulateur le demande." },
+  { theme: P, q: "Pourquoi l'appel aux secours doit-il être rapide et précis ?", a: "Pour envoyer les bons moyens le plus vite possible." },
+  { theme: P, q: "Quel âge minimum pour une formation aux premiers secours ?", a: "10 ans." },
+  { theme: P, q: "Comment réagir face à un arrêt cardiaque ?", a: "Alerter, pratiquer le massage cardiaque et utiliser un DAE si disponible." },
+  { theme: P, q: "Qu'est-ce qu'une hémorragie ?", a: "Un saignement prolongé qui ne s'arrête pas et imbibe vite un linge." }
+];
+
+const QUESTIONS_DEMO = [
+  { theme: "Vérification", q: "Où se trouve la jauge du niveau d'huile moteur ?", a: "Sous le capot, c'est une tige avec une poignée, qu'on essuie, qu'on remet et qu'on lit entre les repères MIN et MAX.", faux: ["Sous le capot, c'est une tige avec une poignée, qu'on lit moteur allumé, sans l'essuyer ni la remettre.", "Sur le réservoir de liquide de frein, un voyant qu'on lit entre les repères MIN et MAX."] },
+  { theme: "Vérification", q: "Comment vérifier la pression des pneus ?", a: "Avec un manomètre, à froid, en comparant à la pression indiquée dans la notice ou sur l'étiquette de la portière conducteur.", faux: ["Avec un manomètre, à chaud, juste après un long trajet, en comparant à la pression du pneu voisin.", "En tapant sur le pneu avec la main pour vérifier qu'il est dur, sans appareil de mesure."] },
+  { theme: "Vérification", q: "À quoi sert le triangle de présignalisation ?", a: "À signaler un véhicule immobilisé sur la route, placé à une distance suffisante derrière le véhicule.", faux: ["À éclairer l'intérieur du véhicule la nuit, posé sur le tableau de bord.", "À caler les roues quand le véhicule est garé dans une pente, posé devant une roue."] },
+  { theme: "Premiers secours", q: "Quels sont les numéros d'urgence à composer ?", a: "112 (numéro européen), 18 (pompiers), 15 (SAMU).", faux: ["18 (SAMU), 15 (pompiers), 112 (police).", "17 (police), 114 (pompiers), 115 (SAMU)."] },
+  { theme: "Premiers secours", q: "Que fait-on pour une personne inconsciente qui respire ?", a: "On la place en position latérale de sécurité (PLS) et on surveille sa respiration en attendant les secours.", faux: ["On la fait asseoir, la tête penchée en avant, et on lui donne à boire en attendant les secours.", "On lui pratique immédiatement un massage cardiaque en attendant les secours."] },
+  { theme: "Premiers secours", q: "Comment arrêter une hémorragie ?", a: "En exerçant une compression directe et forte sur la plaie, et en la maintenant jusqu'à l'arrivée des secours.", faux: ["En nettoyant la plaie à l'eau oxygénée et en la laissant à l'air libre pour qu'elle sèche.", "En appliquant de la glace directement sur la plaie pendant dix minutes, sans rien poser dessus."] }
+];
+
+/* Couleurs par thématique (ajoute-en si tu ajoutes des thèmes) */
+const THEME_COLORS = {
+  "Vérification":      { bg: "#fce7f3", fg: "#be185d", border: "#f472b6" },
+  "Sécurité routière": { bg: "#e0e7ff", fg: "#3730a3", border: "#818cf8" },
+  "Premiers secours":  { bg: "#d1fae5", fg: "#065f46", border: "#34d399" }
+};
+const FALLBACK_COLORS = [
+  { bg: "#ffedd5", fg: "#9a3412", border: "#fb923c" },
+  { bg: "#cffafe", fg: "#155e75", border: "#22d3ee" }
+];
+
+/* Messages d'encouragement */
+const ENCOURAGE_OK = [
+  "Bravo, continue comme ça 💖",
+  "Tu gères, ma belle ✨",
+  "Excellent, tu progresses !",
+  "Trop forte 👑",
+  "Tu es sur la bonne voie 🌸"
+];
+const ENCOURAGE_KO = [
+  "Pas grave, on apprend de ses erreurs 💪",
+  "Retiens bien la bonne réponse, tu vas y arriver 🌷",
+  "Ce n'est qu'un petit raté, courage 💕",
+  "La prochaine sera la bonne 🎀"
+];
+function endMessage(pct) {
+  if (pct >= 88) return "Magnifique ! Tu es prête pour l'examen 👑💖";
+  if (pct >= 70) return "Très bien, tu es sur la bonne voie. Continue comme ça ✨";
+  if (pct >= 50) return "Bon début ! Revois les points faibles et on refait une session 🌸";
+  return "Ne lâche rien, chaque session te rapproche du permis 💪💕";
+}
+
+/* ===================================================================== */
+
+const STORAGE_KEY = "quiz_permis_sessions_v3";
+let session = null; // { items:[{q, theme, correct, options, picked}], index }
+
+const $ = id => document.getElementById(id);
+const show = id => { ["home","quiz","result"].forEach(s => $(s).classList.add("hidden")); $(id).classList.remove("hidden"); };
+
+function themes() {
+  return [...new Set(QUESTIONS.map(q => q.theme))];
+}
+function colorOf(theme) {
+  if (THEME_COLORS[theme]) return THEME_COLORS[theme];
+  const list = themes();
+  const i = list.indexOf(theme);
+  return FALLBACK_COLORS[i % FALLBACK_COLORS.length];
+}
+function badgeStyle(theme) {
+  const c = colorOf(theme);
+  return `background:${c.bg};color:${c.fg};border:2px solid ${c.border}`;
+}
+
+function loadHistory() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; } catch { return []; }
+}
+function saveHistory(h) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(h)); } catch {}
+}
+function shuffle(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+}
+function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+/* Affiche les cases à cocher des thèmes (toutes cochées par défaut) */
+function renderThemeChoices() {
+  $("themeChoices").innerHTML = themes().map(t => {
+    const c = colorOf(t);
+    const n = QUESTIONS.filter(q => q.theme === t).length;
+    return `<label class="chip" style="background:${c.bg};color:${c.fg};border-color:${c.border}">
+      <input type="checkbox" class="theme-check" value="${escapeHtml(t)}" checked>
+      ${escapeHtml(t)} <small>(${n})</small>
+    </label>`;
+  }).join("");
+}
+function selectedThemes() {
+  return [...document.querySelectorAll(".theme-check:checked")].map(c => c.value);
+}
+
+/* Construit une question QCM : la bonne réponse + 1 ou 2 fausses, mélangées */
+function buildItem(question, index) {
+  let wrong;
+  if (question.faux && question.faux.length) {
+    wrong = shuffle(question.faux).slice(0, 1 + Math.floor(Math.random() * 2));
+  } else {
+    // Fausses réponses prises d'abord dans le même thème, pour rester plausibles
+    let pool = QUESTIONS.filter((x, i) => i !== index && x.theme === question.theme).map(x => x.a);
+    if (pool.length < 2) pool = QUESTIONS.filter((_, i) => i !== index).map(x => x.a);
+    const nb = Math.random() < 0.5 ? 1 : 2;
+    wrong = shuffle(pool).slice(0, nb);
+  }
+  return {
+    theme: question.theme,
+    q: question.q,
+    correct: question.a,
+    options: shuffle([question.a, ...wrong]),
+    picked: null
+  };
+}
+
+function renderHistory() {
+  renderProgress();
+  const h = loadHistory();
+  if (!h.length) { $("history").innerHTML = "<p class='sub'>Aucune session pour l'instant.</p>"; return; }
+  const rows = h.slice().reverse().map(s => {
+    const per = Object.entries(s.themes || {}).map(([t, v]) =>
+      `<span class="theme-badge" style="${badgeStyle(t)}">${escapeHtml(t)} : ${v.score}/${v.total}</span>`
+    ).join(" ");
+    return `<tr><td>${s.date}</td><td><b>${s.score} / ${s.total}</b> (${Math.round(100 * s.score / s.total)} %)</td><td>${per}</td></tr>`;
+  }).join("");
+  const best = Math.max(...h.map(s => s.score / s.total));
+  $("history").innerHTML =
+    `<p>Meilleur score : <b>${Math.round(best * 100)} %</b> sur ${h.length} session(s).</p>
+     <table><thead><tr><th>Date</th><th>Score</th><th>Par thématique</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+/* Suivi des questions déjà vues : chaque session prend d'abord les moins vues,
+   dans un ordre fixe, pour que la personne voie toute la banque. */
+const VIEWS_KEY = "quiz_permis_views_v1";
+function loadViews() {
+  try { return JSON.parse(localStorage.getItem(VIEWS_KEY)) || {}; } catch { return {}; }
+}
+function saveViews(v) {
+  try { localStorage.setItem(VIEWS_KEY, JSON.stringify(v)); } catch {}
+}
+function orderByViews(pool) {
+  const views = loadViews();
+  return pool.slice().sort((a, b) => (views[a.q.q] || 0) - (views[b.q.q] || 0) || a.i - b.i);
+}
+function markViewed(items) {
+  const views = loadViews();
+  items.forEach(it => { views[it.q] = (views[it.q] || 0) + 1; });
+  saveViews(views);
+}
+function renderProgress() {
+  const chosen = selectedThemes();
+  const pool = QUESTIONS.filter(q => chosen.includes(q.theme));
+  const views = loadViews();
+  const seen = pool.filter(q => (views[q.q] || 0) > 0).length;
+  const all = pool.length > 0 && seen === pool.length;
+  $("progress").innerHTML = `<b>Questions déjà vues :</b> ${seen} / ${pool.length}` +
+    (all ? " 🎉 Tu as tout vu ! Le quiz reprend avec les questions les moins vues." : "");
+}
+
+function startSession() {
+  const chosen = selectedThemes();
+  if (!chosen.length) { alert("Coche au moins une thématique 💖"); return; }
+  const pool = QUESTIONS.map((q, i) => ({ q, i })).filter(x => chosen.includes(x.q.theme));
+  // Le nombre de questions est celui choisi par la personne.
+  // Si la banque est plus petite, les questions reviennent (on le signale).
+  const n = Math.max(1, Math.min(200, parseInt($("count").value, 10) || 10));
+  const list = orderByViews(pool);
+  const items = [];
+  for (let k = 0; items.length < n; k++) {
+    const x = list[k % list.length];
+    items.push(buildItem(x.q, x.i));
+  }
+  markViewed(items);
+  session = { items, index: 0 };
+  show("quiz");
+  renderQuestion();
+}
+
+/* Images générales (schémas) pour toutes les voitures, choisies d'après le texte de la question */
+const SV = inner => `<svg viewBox="0 0 120 80" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+const ICONS = {
+  mirror:   SV('<rect x="16" y="24" width="88" height="26" rx="6"/><path d="M60 50 L60 70 M44 70 L76 70"/>'),
+  wiper:    SV('<path d="M16 66 Q60 6 104 66"/><path d="M60 66 L84 26"/>'),
+  headlight:SV('<path d="M18 26 L68 16 L68 64 L18 54 Z"/><path d="M82 12 L82 32 M76 20 L82 12 L88 20"/><path d="M82 48 L82 68 M76 60 L82 68 L88 60"/>'),
+  fog:      SV('<circle cx="60" cy="40" r="14"/><path d="M60 14 L60 20 M60 60 L60 66 M34 40 L28 40 M86 40 L92 40"/><path d="M26 64 L94 64" stroke-dasharray="4 6"/>'),
+  hazard:   SV('<path d="M60 14 L104 66 L16 66 Z"/><path d="M60 34 L60 50 M60 56 L60 58"/>'),
+  airbag:   SV('<circle cx="60" cy="40" r="26"/><circle cx="60" cy="40" r="8"/>'),
+  seatbelt: SV('<circle cx="50" cy="22" r="8"/><path d="M42 34 L40 60 L36 72 M56 34 L70 58 L80 72 M30 46 L84 40"/>'),
+  cruise:   SV('<path d="M18 62 A42 42 0 0 1 102 62"/><path d="M60 62 L84 38"/><circle cx="60" cy="62" r="4"/>'),
+  horn:     SV('<path d="M20 30 L40 30 L64 16 L64 64 L40 50 L20 50 Z"/><path d="M76 30 Q84 40 76 50 M86 22 Q100 40 86 58"/>'),
+  isofix:   SV('<rect x="30" y="22" width="60" height="44" rx="10"/><path d="M30 56 L90 56 M44 70 L44 66 M76 70 L76 66"/>'),
+  headrest: SV('<path d="M38 66 L38 30 Q38 14 60 14 Q82 14 82 30 L82 66"/><path d="M30 66 L90 66"/>'),
+  steering: SV('<circle cx="60" cy="40" r="28"/><circle cx="60" cy="40" r="6"/><path d="M60 46 L60 68 M32 40 L54 40 M66 40 L88 40"/>'),
+  air:      SV('<path d="M30 40 A30 30 0 0 1 90 40"/><path d="M90 40 A30 30 0 0 1 30 40"/><path d="M84 30 L90 40 L98 36 M36 50 L30 40 L22 44"/>'),
+  defrost:  SV('<path d="M20 58 L28 22 L92 22 L100 58 Z"/><path d="M34 34 Q40 30 46 34 T58 34 T70 34 T82 34 M34 46 Q40 42 46 46 T58 46 T70 46 T82 46"/>'),
+  washer:   SV('<rect x="16" y="34" width="28" height="22" rx="3"/><path d="M48 40 L100 24 M48 46 L100 40 M48 52 L100 56"/>'),
+  coolant:  SV('<rect x="50" y="14" width="12" height="42" rx="6"/><circle cx="56" cy="62" r="10"/>'),
+  battery:  SV('<rect x="18" y="28" width="84" height="40" rx="4"/><path d="M40 28 L40 20 M80 28 L80 20 M34 48 L46 48 M40 42 L40 54 M74 48 L86 48"/>'),
+  fuel:     SV('<rect x="22" y="18" width="40" height="52" rx="4"/><path d="M62 30 L82 38 L82 62 M30 30 L54 30"/>'),
+  oil:      SV('<path d="M26 34 L70 34 L70 62 L26 62 Z"/><path d="M70 42 L92 26"/><path d="M40 34 L40 22 L56 22 L56 34"/>'),
+  brake:    SV('<circle cx="60" cy="40" r="26"/><path d="M60 26 L60 46 M60 54 L60 56"/>'),
+  tyre:     SV('<circle cx="60" cy="40" r="28"/><circle cx="60" cy="40" r="12"/>'),
+  triangle: SV('<path d="M60 14 L104 66 L16 66 Z"/>'),
+  bonnet:   SV('<path d="M12 60 L24 44 L56 36 L92 36 L108 50 L108 62 L12 62 Z"/><path d="M30 36 L44 24 L72 24 L84 36"/>'),
+  boot:     SV('<path d="M12 62 L12 46 L28 30 L80 30 L100 46 L108 46 L108 62 Z"/><path d="M28 30 L24 46 M84 30 L92 46"/>'),
+  door:     SV('<rect x="22" y="14" width="76" height="56" rx="8"/><circle cx="82" cy="42" r="3"/>'),
+  vest:     SV('<path d="M34 18 L50 18 L60 30 L70 18 L86 18 L92 66 L28 66 Z"/><path d="M30 46 L90 46" stroke-dasharray="6 4"/>'),
+  document: SV('<path d="M34 14 L76 14 L92 30 L92 66 L34 66 Z"/><path d="M44 40 L82 40 M44 50 L82 50 M44 60 L70 60"/>'),
+  heart:    SV('<path d="M60 66 L24 32 Q16 20 32 16 Q46 14 60 30 Q74 14 88 16 Q104 20 96 32 Z"/>'),
+  phone:    SV('<rect x="34" y="12" width="52" height="56" rx="8"/><text x="60" y="48" text-anchor="middle" font-size="16" font-weight="700" fill="currentColor" stroke="none">112</text>'),
+  person:   SV('<circle cx="60" cy="22" r="10"/><path d="M40 70 L44 44 Q60 36 76 44 L80 70 M48 70 L48 56 M72 70 L72 56"/>'),
+  cross:    SV('<rect x="48" y="16" width="24" height="48" rx="4"/><rect x="36" y="28" width="48" height="24" rx="4"/>'),
+  car:      SV('<path d="M16 56 L24 40 L50 34 L72 34 L96 40 L104 56 L104 64 L16 64 Z"/><circle cx="36" cy="66" r="6"/><circle cx="84" cy="66" r="6"/>')
+};
+/* L'ordre compte : la première règle qui correspond est utilisée */
+const ICON_RULES = [
+  [/rétroviseur/i, "mirror"],
+  [/essuie-glace|balai/i, "wiper"],
+  [/réglage de hauteur/i, "headlight"],
+  [/brouillard/i, "fog"],
+  [/détresse/i, "hazard"],
+  [/airbag/i, "airbag"],
+  [/ceinture/i, "seatbelt"],
+  [/régulateur|limiteur/i, "cruise"],
+  [/klaxon/i, "horn"],
+  [/ISOFIX/i, "isofix"],
+  [/appui-tête/i, "headrest"],
+  [/volant/i, "steering"],
+  [/recyclage/i, "air"],
+  [/dégivrage|air dirigé/i, "defrost"],
+  [/lave-glace|gicleurs/i, "washer"],
+  [/refroidissement|température/i, "coolant"],
+  [/batterie/i, "battery"],
+  [/carburant|trappe/i, "fuel"],
+  [/huile|jauge/i, "oil"],
+  [/frein|freinage|feux stop/i, "brake"],
+  [/pneu|flanc/i, "tyre"],
+  [/triangle/i, "triangle"],
+  [/capot|loquet|verrou/i, "bonnet"],
+  [/coffre/i, "boot"],
+  [/porte|enfant/i, "door"],
+  [/gilet/i, "vest"],
+  [/constat|certificat|assurance|éthylotest/i, "document"],
+  [/respir|inconscient|conscience|connaissance/i, "person"],
+  [/défibrillateur|DAE|arrêt cardiaque|massage/i, "heart"],
+  [/numéros|alerte|SAIP|appel|secours|localiser|localisation/i, "phone"],
+  [/saignement|hémorragie/i, "cross"],
+  [/feux|feu |clignotant|marche arrière|plaque|réflecteur|ampoule|phare/i, "headlight"]
+];
+const THEME_ICON = { "Vérification": "car", "Sécurité routière": "car", "Premiers secours": "cross" };
+function iconFor(item) {
+  const hit = ICON_RULES.find(([re]) => re.test(item.q));
+  return ICONS[hit ? hit[1] : THEME_ICON[item.theme]] || ICONS.car;
+}
+
+function renderQuestion() {
+  const { items, index } = session;
+  const item = items[index];
+  const score = items.slice(0, index).filter(it => it.picked === it.correct).length;
+  $("counter").textContent = `Question ${index + 1} / ${items.length}`;
+  $("runScore").textContent = `Score : ${score} / ${index}`;
+  $("bar").style.width = `${(index / items.length) * 100}%`;
+  $("themeBadge").textContent = item.theme;
+  $("themeBadge").setAttribute("style", badgeStyle(item.theme));
+  $("question").textContent = item.q;
+  $("qicon").innerHTML = iconFor(item);
+  $("feedback").classList.add("hidden");
+  $("nextBtn").classList.add("hidden");
+  $("nextBtn").textContent = index + 1 === items.length ? "Voir le résultat" : "Question suivante";
+
+  $("options").innerHTML = item.options.map((opt, i) =>
+    `<button class="option" data-i="${i}">${escapeHtml(opt)}</button>`
+  ).join("");
+  document.querySelectorAll(".option").forEach(btn => {
+    btn.onclick = () => choose(+btn.dataset.i);
+  });
+}
+
+function choose(i) {
+  const item = session.items[session.index];
+  if (item.picked !== null) return;
+  const choice = item.options[i];
+  item.picked = choice;
+  document.querySelectorAll(".option").forEach((btn, k) => {
+    btn.disabled = true;
+    const opt = item.options[k];
+    if (opt === item.correct) btn.classList.add("good");
+    else if (k === i) btn.classList.add("bad");
+  });
+  const ok = choice === item.correct;
+  const fb = $("feedback");
+  fb.className = "feedback " + (ok ? "ok" : "ko");
+  fb.innerHTML = `<b>${ok ? "Bravo 💖 C'est juste !" : "Oups, ce n'est pas la bonne réponse."}</b><br>${escapeHtml(item.correct)}
+    <div class="encourage">${escapeHtml(pick(ok ? ENCOURAGE_OK : ENCOURAGE_KO))}</div>`;
+  fb.classList.remove("hidden");
+  $("nextBtn").classList.remove("hidden");
+  const score = session.items.slice(0, session.index + 1).filter(it => it.picked === it.correct).length;
+  $("runScore").textContent = `Score : ${score} / ${session.index + 1}`;
+}
+
+function nextQuestion() {
+  session.index++;
+  if (session.index >= session.items.length) finishSession();
+  else renderQuestion();
+}
+
+function finishSession() {
+  const { items } = session;
+  const total = items.length;
+  const score = items.filter(it => it.picked === it.correct).length;
+  const pct = Math.round(100 * score / total);
+
+  // Score par thématique
+  const themeStats = {};
+  items.forEach(it => {
+    const s = themeStats[it.theme] || (themeStats[it.theme] = { score: 0, total: 0 });
+    s.total++;
+    if (it.picked === it.correct) s.score++;
+  });
+
+  $("finalScore").textContent = `${score} / ${total}  (${pct} %)`;
+  $("finalScore").setAttribute("style", "");
+  $("finalMsg").textContent = endMessage(pct);
+
+  $("themeScores").innerHTML = Object.entries(themeStats).map(([t, v]) =>
+    `<p><span class="theme-badge" style="${badgeStyle(t)}">${escapeHtml(t)}</span>
+     <b>${v.score} / ${v.total}</b> (${Math.round(100 * v.score / v.total)} %)</p>`
+  ).join("");
+
+  $("review").innerHTML = items.map((it, i) => {
+    const ok = it.picked === it.correct;
+    return `<tr>
+      <td>${i + 1}</td>
+      <td><span class="theme-badge" style="${badgeStyle(it.theme)}">${escapeHtml(it.theme)}</span><br>${escapeHtml(it.q)}</td>
+      <td>${escapeHtml(it.picked ?? "—")}</td>
+      <td>${escapeHtml(it.correct)}</td>
+      <td class="${ok ? "tag-ok" : "tag-ko"}">${ok ? "Juste" : "Faux"}</td>
+    </tr>`;
+  }).join("");
+
+  const h = loadHistory();
+  h.push({ date: new Date().toLocaleString("fr-FR"), score, total, themes: themeStats });
+  saveHistory(h);
+
+  show("result");
+}
+
+$("startBtn").onclick = startSession;
+$("againBtn").onclick = startSession;
+$("backBtn").onclick = () => { renderHistory(); show("home"); };
+/* Effacement en deux clics (les boîtes de confirmation peuvent être bloquées dans l'aperçu) */
+let resetArmed = false;
+$("resetBtn").onclick = () => {
+  if (!resetArmed) {
+    resetArmed = true;
+    $("resetBtn").textContent = "Cliquer encore pour effacer";
+    setTimeout(() => { resetArmed = false; $("resetBtn").textContent = "Effacer l'historique"; }, 4000);
+    return;
+  }
+  resetArmed = false;
+  saveHistory([]);
+  $("resetBtn").textContent = "Effacer l'historique";
+  renderHistory();
+};
+$("nextBtn").onclick = nextQuestion;
+$("backQuizBtn").onclick = () => {
+  renderHistory(); show("home");
+};
+
+renderThemeChoices();
+renderHistory();
+</script>
+</body>
+</html>
