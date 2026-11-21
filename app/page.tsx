@@ -7,7 +7,7 @@ import "./hub.css";
 // Même compte et même session que JamsPlans (même URL Supabase = même stockage de session).
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
-const supabase = SUPABASE_URL && SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: true } }) : null;
+const supabase = SUPABASE_URL && SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: true, detectSessionInUrl: false } }) : null;
 
 // Page d'accueil « Mon espace » : un bouton par module.
 //  - JamsPlans    -> /jamsplans   (app/jamsplans/page.tsx)
@@ -24,6 +24,8 @@ export default function Home() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [info, setInfo] = useState("");
+  const [firstName, setFirstName] = useState("");
 
   useEffect(() => {
     // Les liens de Supabase (mot de passe oublié, confirmation d'email) renvoient
@@ -55,17 +57,53 @@ export default function Home() {
     };
   }, []);
 
+  // Prénom pour l'accueil : d'abord celui enregistré à l'inscription, sinon celui du profil JamsPlans.
+  useEffect(() => {
+    if (!user) { setFirstName(""); return; }
+    const meta = (user.user_metadata?.first_name as string | undefined)?.trim();
+    if (meta) { setFirstName(meta); return; }
+    let alive = true;
+    supabase
+      ?.from("profiles")
+      .select("first_name")
+      .eq("id", user.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        const n = (data?.first_name as string | undefined)?.trim();
+        if (alive && n) setFirstName(n);
+      });
+    return () => { alive = false; };
+  }, [user]);
+
   const locked = user === null; // connecté = false ; en cours de vérification = on laisse passer
 
   async function signIn(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError("");
+    setInfo("");
     if (!supabase) { setBusy(false); setError("Connexion indisponible pour le moment."); return; }
     const { error: err } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
     setBusy(false);
+    if (err) {
+      setError(
+        /invalid login credentials/i.test(err.message)
+          ? "Adresse mail ou mot de passe incorrect."
+          : /email not confirmed/i.test(err.message)
+          ? "Confirme d'abord ton adresse mail (regarde ta boîte mail)."
+          : err.message
+      );
+    } else setPassword("");
+  }
+
+  async function forgot() {
+    setError("");
+    setInfo("");
+    if (!email.trim()) { setError("Écris ton adresse mail ci-dessus, puis clique sur « Mot de passe oublié »."); return; }
+    if (!supabase) { setError("Connexion indisponible pour le moment."); return; }
+    const { error: err } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: window.location.origin });
     if (err) setError(err.message);
-    else setPassword("");
+    else setInfo("Si un compte existe pour cette adresse, un mail de réinitialisation vient d'être envoyé.");
   }
 
   function guard(e: React.MouseEvent) {
@@ -105,7 +143,9 @@ export default function Home() {
 
         <section className="hero">
           <span className="pill">⚡ Upgrade</span>
-          <h1>Bienvenue dans <em>ton espace</em> pour progresser.</h1>
+          <h1>
+            {user && firstName ? <>Bienvenue <em>{firstName}</em>, dans ton espace pour progresser.</> : <>Bienvenue dans <em>ton espace</em> pour progresser.</>}
+          </h1>
           <p>Discipline, permis, langues : tout ce que tu construis pour devenir meilleur chaque jour, au même endroit. Choisis un module et avance.</p>
         </section>
 
@@ -117,9 +157,13 @@ export default function Home() {
               <input type="email" placeholder="Adresse mail" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
               <input type="password" placeholder="Mot de passe" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
               <p className="err" role="alert">{error}</p>
+              {info && <p className="info">{info}</p>}
               <button className="go" type="submit" disabled={busy}>{busy ? "Connexion…" : "Se connecter"}</button>
             </form>
-            <p className="more">Pas encore de compte, ou mot de passe oublié ? <a href="/jamsplans">C'est par ici</a>.</p>
+            <p className="more">
+              <button type="button" className="textlink" onClick={forgot}>Mot de passe oublié ?</button>
+              {" · "}Pas encore de compte ? <a href="/jamsplans">Créer un compte</a>
+            </p>
           </section>
         )}
 
