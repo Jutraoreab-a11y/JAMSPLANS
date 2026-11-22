@@ -14,6 +14,7 @@ import { createClient } from '@supabase/supabase-js';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const maxDuration = 30;
 
 const LANGS: Record<string, string> = { en: 'anglais', es: 'espagnol', zh: 'mandarin (caractères simplifiés, avec le pinyin entre parenthèses)', ar: 'arabe standard (avec la translittération entre parenthèses)' };
 const MODELS = ['gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.1-flash-lite'];
@@ -69,6 +70,7 @@ export async function POST(request: Request) {
       `Tu es un partenaire de conversation orale bienveillant pour un francophone qui apprend cette langue : ${langName}. ` +
       `Sujet : ${topic}. Réponds TOUJOURS dans cette langue, en 1 à 3 phrases courtes et naturelles (niveau débutant à intermédiaire), ` +
       `puis pose une question pour relancer la conversation. ` +
+      `Écris uniquement dans l'écriture normale de la langue : jamais de pinyin, de translittération, de romanisation, de traduction entre parenthèses ni d'espaces entre les caractères chinois (la réponse est lue à voix haute). ` +
       `Si le dernier message de l'apprenant contient des fautes, liste-les dans "corrections" (3 au maximum), avec une explication courte en français. ` +
       `Ne corrige pas ce qui est correct ; sinon "corrections" est un tableau vide. ` +
       `Réponds uniquement avec un objet JSON valide : {"reply":"...","corrections":[{"wrong":"...","right":"...","why":"..."}]}`;

@@ -13250,10 +13250,12 @@ function renderFree() {
 }
 function freeCall(lang, s, history) {
   s.busy = true; s.error = ""; renderFree();
+  var ctl = window.AbortController ? new AbortController() : null, tmo = setTimeout(function () { if (ctl) ctl.abort(); }, 35000);
   return fetch("/api/chat", {
     method: "POST", headers: { "Content-Type": "application/json", "Authorization": "Bearer " + chatToken() },
-    body: JSON.stringify({ lang: lang, topic: s.topic, messages: history })
+    body: JSON.stringify({ lang: lang, topic: s.topic, messages: history }), signal: ctl ? ctl.signal : undefined
   }).then(function (r) {
+    clearTimeout(tmo);
     if (!r.ok) { var er = new Error("status " + r.status); er.status = r.status; throw er; }
     return r.json();
   }).then(function (d) {
