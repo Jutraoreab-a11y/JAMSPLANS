@@ -187,6 +187,28 @@ textarea:focus { outline: none; border-color: #C6F432; }
 .tt tfoot th { color: #C6F432; }
 .mic-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #FF5C5C; margin-right: 6px; animation: pulse 1.2s infinite; }
 @keyframes pulse { 0% { opacity: 1; } 50% { opacity: .25; } 100% { opacity: 1; } }
+
+/* Parcours, objectif du jour, exercices */
+.goal { margin-top: 14px; }
+.goal-top { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 14px; margin-bottom: 4px; color: #D4D4D8; }
+.goal .progress { margin: 0; }
+.lvl { border: 1px solid #2A2A2E; border-radius: 12px; padding: 12px 14px; margin-top: 10px; }
+.lvl.cur { border-color: #C6F432; }
+.lvl-top { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-weight: bold; }
+.tagok { color: #C6F432; font-size: 13px; font-weight: normal; }
+.lvl .bar2 { display: flex; height: 8px; background: #1f1f23; border-radius: 999px; overflow: hidden; margin: 8px 0 4px; }
+.lvl .bar2 div { height: 100%; background: #8fb524; }
+.lvl .bar2 div.solid { background: #C6F432; }
+.lvl small { opacity: 0.8; }
+.btns button.sm, button.sm { padding: 6px 14px; font-size: 14px; }
+.err-item { display: flex; justify-content: space-between; gap: 10px; border-bottom: 1px solid #2A2A2E; padding: 8px 0; font-size: 15px; }
+.err-item small { opacity: 0.7; }
+.err-n { text-align: right; font-size: 13px; opacity: 0.9; white-space: nowrap; }
+.err-n button { margin-bottom: 4px; }
+#dict-in { width: 100%; box-sizing: border-box; padding: 12px; border-radius: 10px; border: 1px solid #2A2A2E; background: #0B0B0C; color: #fff; font: inherit; font-size: 16px; margin-top: 12px; }
+#dict-in:focus { outline: 2px solid #C6F432; outline-offset: 1px; }
+.heard { font-size: 14px; opacity: 0.85; }
+@media (max-width: 600px) { .menu { gap: 6px; } .menu button { padding: 7px 12px; font-size: 13.5px; } }
 </style>
 </head>
 <body>
@@ -12760,11 +12782,13 @@ function showFeedback(correct, ok) {
 
 // ---- Mode vocabulaire (file de révision) ----
 function pick(value) {
+  if (mode[cur] === "drill") return drillPick(value);
   if (inTest()) return testPick(value);
   var s = st[cur], key = s.queue[0], it = byKey[cur][key];
   if (answered || !it) return;
   answered = true;
   lastOk = value === it[2];
+  if (lastOk) recordFix(cur, "w:" + key); else recordError(cur, "w:" + key);
   if (!(key in s.seen)) s.seen[key] = lastOk;
   srsUpdate(s, key, lastOk);
   persist();
@@ -12775,6 +12799,7 @@ function pick(value) {
 
 function next() {
   if (!answered) return;
+  if (mode[cur] === "drill") return drillNext();
   if (inTest()) return testNext();
   var s = st[cur], key = s.queue.shift();
   if (!lastOk) s.queue.push(key);
@@ -12809,6 +12834,7 @@ function testPick(value) {
   if (answered || !q) return;
   answered = true;
   q.ok = value === q.it[2];
+  if (q.ok) recordFix(cur, "w:" + keyOf(q.it)); else recordError(cur, "w:" + keyOf(q.it));
   showFeedback(q.it[2], q.ok);
 }
 
@@ -12816,7 +12842,7 @@ function testNext() {
   var t = ev[cur];
   answered = false;
   t.i++;
-  if (t.i >= t.qs.length) mode[cur] = "result";
+  if (t.i >= t.qs.length) { mode[cur] = "result"; recordTestResult(); }
   render();
 }
 
@@ -12873,7 +12899,8 @@ function saveTime() { try { localStorage.setItem(TIME_KEY, JSON.stringify(temps)
 function dayKey(d) { return d.toLocaleDateString("fr-CA"); }
 function catNow() {
   var m = mode[cur] || "quiz";
-  if (m === "time") return null;
+  if (m === "time" || m === "path" || m === "book" || m === "listenmenu") return null;
+  if (m === "drill") { var dk = (dr[cur] || {}).kind; return (dk === "listen" || dk === "dictee" || dk === "speak") ? "oral" : "ecrit"; }
   return (m === "read" || m === "chat") ? "oral" : "ecrit";
 }
 ["mousemove", "keydown", "click", "touchstart", "scroll"].forEach(function (name) {
@@ -13073,22 +13100,25 @@ function renderChat() {
 function chatCall(lang, s, history) {
   s.busy = true; s.error = ""; renderChat();
   return fetch(CHAT_API, {
-    method: "POST", headers: { "Content-Type": "application/json" },
+    method: "POST", headers: { "Content-Type": "application/json", "Authorization": "Bearer " + chatToken() },
     body: JSON.stringify({ lang: lang, topic: s.topic, messages: history })
   }).then(function (r) {
-    if (!r.ok) throw new Error("status " + r.status);
+    if (!r.ok) { var er = new Error("status " + r.status); er.status = r.status; throw er; }
     return r.json();
   }).then(function (d) {
     s.busy = false;
     if (d.corrections && d.corrections.length) {
+      saveChatCorrections(lang, d.corrections);
       for (var u = s.msgs.length - 1; u >= 0; u--) if (s.msgs[u].role === "user") { s.msgs[u].corrections = d.corrections; break; }
     }
     s.msgs.push({ role: "ai", text: d.reply || "" });
     if (d.reply) speak(lang, d.reply);
     renderChat();
-  }).catch(function () {
+  }).catch(function (err) {
     s.busy = false;
-    s.error = "Le serveur de conversation n'est pas connecté. Voir saas_api/README.md pour le mettre en ligne avec ta clé API.";
+    s.error = err && err.status === 401 ? "Ta session a expiré : reconnecte-toi depuis l'accueil FAMAL puis reviens ici."
+      : (err && err.status === 503 ? "La conversation n'est pas encore activée sur le serveur (clé ANTHROPIC_API_KEY à ajouter dans Vercel)."
+      : (err && err.status === 429 ? "Trop de messages pour le moment, réessaie dans quelques minutes." : "Le serveur de conversation ne répond pas. Réessaie dans un instant."));
     renderChat();
   });
 }
@@ -13125,7 +13155,7 @@ function renderTime() {
   var langs = ["en", "es", "zh", "ar"];
   var h = menuHtml() + '<div class="card"><div class="cat">Mon temps</div><div class="fr">Temps passé par langue</div>' +
     '<p class="pic-note">Compté quand la page est ouverte et que tu es actif (clic, clavier ou défilement). Écrit = quiz et tests. Oral = lecture et conversation.</p>' +
-    '<div class="tt-wrap"><table class="tt"><thead><tr><th>Langue</th><th>Écrit<br><small>aujourd\'hui</small></th><th>Oral<br><small>aujourd\'hui</small></th>' +
+    goalPickHtml() + '<div class="tt-wrap"><table class="tt"><thead><tr><th>Langue</th><th>Écrit<br><small>aujourd\'hui</small></th><th>Oral<br><small>aujourd\'hui</small></th>' +
     '<th>Écrit<br><small>7 jours</small></th><th>Oral<br><small>7 jours</small></th><th>Écrit<br><small>total</small></th><th>Oral<br><small>total</small></th></tr></thead><tbody>';
   var tots = { ecrit: 0, oral: 0 };
   for (var i = 0; i < langs.length; i++) {
@@ -13142,18 +13172,552 @@ function renderTime() {
   document.getElementById("stage").innerHTML = h;
 }
 
+// ======== Phrases utiles : [situation, français, phrase, niveau 0-3 (A1 à B2)] ========
+// À faire relire par un locuteur natif pour le mandarin et l'arabe.
+var PHR = {
+  en: [
+    ["Se présenter", "Bonjour, je m'appelle Marie.", "Hello, my name is Marie.", 0],
+    ["Se présenter", "Enchanté de vous rencontrer.", "Nice to meet you.", 0],
+    ["Se présenter", "Je viens de France.", "I come from France.", 0],
+    ["Se présenter", "Je parle un peu anglais.", "I speak a little English.", 1],
+    ["Se présenter", "Pouvez-vous répéter, s'il vous plaît ?", "Could you repeat that, please?", 1],
+    ["Restaurant", "Une table pour deux, s'il vous plaît.", "A table for two, please.", 0],
+    ["Restaurant", "Je voudrais un café, s'il vous plaît.", "I would like a coffee, please.", 0],
+    ["Restaurant", "Qu'est-ce que vous me conseillez ?", "What do you recommend?", 1],
+    ["Restaurant", "L'addition, s'il vous plaît.", "The bill, please.", 0],
+    ["Restaurant", "Je suis allergique aux noix.", "I am allergic to nuts.", 2],
+    ["Transports", "Où est la gare ?", "Where is the train station?", 0],
+    ["Transports", "À quelle heure part le prochain train ?", "What time does the next train leave?", 1],
+    ["Transports", "Un billet pour Londres, s'il vous plaît.", "One ticket to London, please.", 1],
+    ["Transports", "Je me suis perdu.", "I am lost.", 1],
+    ["Transports", "Mon vol a été annulé.", "My flight has been cancelled.", 2],
+    ["Courses", "Combien ça coûte ?", "How much does it cost?", 0],
+    ["Courses", "Je regarde seulement, merci.", "I'm just looking, thank you.", 1],
+    ["Courses", "Avez-vous une taille plus grande ?", "Do you have a bigger size?", 1],
+    ["Courses", "Puis-je payer par carte ?", "Can I pay by card?", 1],
+    ["Courses", "Je voudrais être remboursé.", "I would like a refund.", 2],
+    ["Santé", "J'ai mal à la tête.", "I have a headache.", 0],
+    ["Santé", "J'ai besoin d'un médecin.", "I need a doctor.", 1],
+    ["Santé", "Je ne me sens pas bien depuis hier.", "I haven't felt well since yesterday.", 2],
+    ["Santé", "Où est la pharmacie la plus proche ?", "Where is the nearest pharmacy?", 1],
+    ["Santé", "Pouvez-vous appeler une ambulance ?", "Can you call an ambulance?", 2],
+    ["Travail", "J'ai une réunion à dix heures.", "I have a meeting at ten o'clock.", 1],
+    ["Travail", "Pouvez-vous m'envoyer le document par e-mail ?", "Could you send me the document by email?", 2],
+    ["Travail", "Je travaille dans la finance.", "I work in finance.", 1],
+    ["Travail", "Je suis disponible demain après-midi.", "I am available tomorrow afternoon.", 2],
+    ["Travail", "Je serais ravi de rejoindre votre équipe.", "I would be delighted to join your team.", 3],
+    ["Logement", "Je cherche un appartement à louer.", "I am looking for an apartment to rent.", 1],
+    ["Logement", "Le chauffage ne marche pas.", "The heating does not work.", 1],
+    ["Logement", "Quel est le montant du loyer ?", "How much is the rent?", 2],
+    ["Logement", "Pouvez-vous réparer la fuite d'eau ?", "Could you fix the water leak?", 2],
+    ["Logement", "Le contrat commence le premier du mois.", "The lease starts on the first of the month.", 3],
+    ["Opinions", "Je suis d'accord avec vous.", "I agree with you.", 1],
+    ["Opinions", "À mon avis, c'est une bonne idée.", "In my opinion, it's a good idea.", 2],
+    ["Opinions", "Je n'ai pas bien compris la question.", "I didn't quite understand the question.", 2],
+    ["Opinions", "Cela dépend de la situation.", "It depends on the situation.", 3],
+    ["Opinions", "Malgré les difficultés, nous avons réussi.", "Despite the difficulties, we succeeded.", 3]
+  ],
+  es: [
+    ["Se présenter", "Bonjour, je m'appelle Marie.", "Hola, me llamo Marie.", 0],
+    ["Se présenter", "Enchanté de vous rencontrer.", "Mucho gusto.", 0],
+    ["Se présenter", "Je viens de France.", "Vengo de Francia.", 0],
+    ["Se présenter", "Je parle un peu espagnol.", "Hablo un poco de español.", 1],
+    ["Se présenter", "Pouvez-vous répéter, s'il vous plaît ?", "¿Puede repetir, por favor?", 1],
+    ["Restaurant", "Une table pour deux, s'il vous plaît.", "Una mesa para dos, por favor.", 0],
+    ["Restaurant", "Je voudrais un café, s'il vous plaît.", "Quisiera un café, por favor.", 0],
+    ["Restaurant", "Qu'est-ce que vous me conseillez ?", "¿Qué me recomienda?", 1],
+    ["Restaurant", "L'addition, s'il vous plaît.", "La cuenta, por favor.", 0],
+    ["Restaurant", "Je suis allergique aux noix.", "Soy alérgico a las nueces.", 2],
+    ["Transports", "Où est la gare ?", "¿Dónde está la estación de tren?", 0],
+    ["Transports", "À quelle heure part le prochain train ?", "¿A qué hora sale el próximo tren?", 1],
+    ["Transports", "Un billet pour Madrid, s'il vous plaît.", "Un billete para Madrid, por favor.", 1],
+    ["Transports", "Je me suis perdu.", "Estoy perdido.", 1],
+    ["Transports", "Mon vol a été annulé.", "Mi vuelo ha sido cancelado.", 2],
+    ["Courses", "Combien ça coûte ?", "¿Cuánto cuesta?", 0],
+    ["Courses", "Je regarde seulement, merci.", "Solo estoy mirando, gracias.", 1],
+    ["Courses", "Avez-vous une taille plus grande ?", "¿Tiene una talla más grande?", 1],
+    ["Courses", "Puis-je payer par carte ?", "¿Puedo pagar con tarjeta?", 1],
+    ["Courses", "Je voudrais être remboursé.", "Quisiera un reembolso.", 2],
+    ["Santé", "J'ai mal à la tête.", "Me duele la cabeza.", 0],
+    ["Santé", "J'ai besoin d'un médecin.", "Necesito un médico.", 1],
+    ["Santé", "Je ne me sens pas bien depuis hier.", "No me siento bien desde ayer.", 2],
+    ["Santé", "Où est la pharmacie la plus proche ?", "¿Dónde está la farmacia más cercana?", 1],
+    ["Santé", "Pouvez-vous appeler une ambulance ?", "¿Puede llamar a una ambulancia?", 2],
+    ["Travail", "J'ai une réunion à dix heures.", "Tengo una reunión a las diez.", 1],
+    ["Travail", "Pouvez-vous m'envoyer le document par e-mail ?", "¿Puede enviarme el documento por correo electrónico?", 2],
+    ["Travail", "Je travaille dans la finance.", "Trabajo en finanzas.", 1],
+    ["Travail", "Je suis disponible demain après-midi.", "Estoy disponible mañana por la tarde.", 2],
+    ["Travail", "Je serais ravi de rejoindre votre équipe.", "Me encantaría unirme a su equipo.", 3],
+    ["Logement", "Je cherche un appartement à louer.", "Busco un apartamento para alquilar.", 1],
+    ["Logement", "Le chauffage ne marche pas.", "La calefacción no funciona.", 1],
+    ["Logement", "Quel est le montant du loyer ?", "¿Cuánto es el alquiler?", 2],
+    ["Logement", "Pouvez-vous réparer la fuite d'eau ?", "¿Puede arreglar la fuga de agua?", 2],
+    ["Logement", "Le contrat commence le premier du mois.", "El contrato empieza el primero del mes.", 3],
+    ["Opinions", "Je suis d'accord avec vous.", "Estoy de acuerdo con usted.", 1],
+    ["Opinions", "À mon avis, c'est une bonne idée.", "En mi opinión, es una buena idea.", 2],
+    ["Opinions", "Je n'ai pas bien compris la question.", "No entendí bien la pregunta.", 2],
+    ["Opinions", "Cela dépend de la situation.", "Depende de la situación.", 3],
+    ["Opinions", "Malgré les difficultés, nous avons réussi.", "A pesar de las dificultades, lo conseguimos.", 3]
+  ],
+  zh: [
+    ["Se présenter", "Bonjour, je m'appelle Marie.", "你好，我叫玛丽。 nǐ hǎo, wǒ jiào Mǎlì", 0],
+    ["Se présenter", "Enchanté de vous rencontrer.", "很高兴认识你。 hěn gāoxìng rènshi nǐ", 0],
+    ["Se présenter", "Je viens de France.", "我来自法国。 wǒ láizì Fǎguó", 0],
+    ["Se présenter", "Je parle un peu chinois.", "我会说一点中文。 wǒ huì shuō yìdiǎn Zhōngwén", 1],
+    ["Se présenter", "Pouvez-vous répéter, s'il vous plaît ?", "请您再说一遍。 qǐng nín zài shuō yí biàn", 1],
+    ["Restaurant", "Une table pour deux, s'il vous plaît.", "请给我们一张两人桌。 qǐng gěi wǒmen yì zhāng liǎng rén zhuō", 0],
+    ["Restaurant", "Je voudrais un café, s'il vous plaît.", "我想要一杯咖啡。 wǒ xiǎng yào yì bēi kāfēi", 0],
+    ["Restaurant", "Qu'est-ce que vous me conseillez ?", "你有什么推荐的吗？ nǐ yǒu shénme tuījiàn de ma", 1],
+    ["Restaurant", "L'addition, s'il vous plaît.", "请结账。 qǐng jiézhàng", 0],
+    ["Restaurant", "Je suis allergique aux noix.", "我对坚果过敏。 wǒ duì jiānguǒ guòmǐn", 2],
+    ["Transports", "Où est la gare ?", "火车站在哪里？ huǒchēzhàn zài nǎlǐ", 0],
+    ["Transports", "À quelle heure part le prochain train ?", "下一班火车几点开？ xià yì bān huǒchē jǐ diǎn kāi", 1],
+    ["Transports", "Un billet pour Pékin, s'il vous plaît.", "请给我一张去北京的票。 qǐng gěi wǒ yì zhāng qù Běijīng de piào", 1],
+    ["Transports", "Je me suis perdu.", "我迷路了。 wǒ mílù le", 1],
+    ["Transports", "Mon vol a été annulé.", "我的航班被取消了。 wǒ de hángbān bèi qǔxiāo le", 2],
+    ["Courses", "Combien ça coûte ?", "这个多少钱？ zhège duōshao qián", 0],
+    ["Courses", "Je regarde seulement, merci.", "我只是看看，谢谢。 wǒ zhǐshì kànkan, xièxie", 1],
+    ["Courses", "Avez-vous une taille plus grande ?", "有大一点的尺码吗？ yǒu dà yìdiǎn de chǐmǎ ma", 1],
+    ["Courses", "Puis-je payer par carte ?", "可以刷卡吗？ kěyǐ shuākǎ ma", 1],
+    ["Courses", "Je voudrais être remboursé.", "我想退款。 wǒ xiǎng tuìkuǎn", 2],
+    ["Santé", "J'ai mal à la tête.", "我头疼。 wǒ tóuténg", 0],
+    ["Santé", "J'ai besoin d'un médecin.", "我需要看医生。 wǒ xūyào kàn yīshēng", 1],
+    ["Santé", "Je ne me sens pas bien depuis hier.", "我从昨天起就不舒服。 wǒ cóng zuótiān qǐ jiù bù shūfu", 2],
+    ["Santé", "Où est la pharmacie la plus proche ?", "最近的药店在哪里？ zuìjìn de yàodiàn zài nǎlǐ", 1],
+    ["Santé", "Pouvez-vous appeler une ambulance ?", "请帮我叫救护车。 qǐng bāng wǒ jiào jiùhùchē", 2],
+    ["Travail", "J'ai une réunion à dix heures.", "我十点有个会议。 wǒ shí diǎn yǒu ge huìyì", 1],
+    ["Travail", "Pouvez-vous m'envoyer le document par e-mail ?", "您可以把文件发到我的邮箱吗？ nín kěyǐ bǎ wénjiàn fā dào wǒ de yóuxiāng ma", 2],
+    ["Travail", "Je travaille dans la finance.", "我在金融行业工作。 wǒ zài jīnróng hángyè gōngzuò", 1],
+    ["Travail", "Je suis disponible demain après-midi.", "我明天下午有空。 wǒ míngtiān xiàwǔ yǒu kòng", 2],
+    ["Travail", "Je serais ravi de rejoindre votre équipe.", "我很乐意加入你们的团队。 wǒ hěn lèyì jiārù nǐmen de tuánduì", 3],
+    ["Logement", "Je cherche un appartement à louer.", "我在找一套出租的公寓。 wǒ zài zhǎo yí tào chūzū de gōngyù", 1],
+    ["Logement", "Le chauffage ne marche pas.", "暖气坏了。 nuǎnqì huài le", 1],
+    ["Logement", "Quel est le montant du loyer ?", "房租是多少？ fángzū shì duōshao", 2],
+    ["Logement", "Pouvez-vous réparer la fuite d'eau ?", "您能修一下漏水吗？ nín néng xiū yíxià lòushuǐ ma", 2],
+    ["Logement", "Le contrat commence le premier du mois.", "合同从每月一号开始。 hétong cóng měi yuè yī hào kāishǐ", 3],
+    ["Opinions", "Je suis d'accord avec vous.", "我同意你的看法。 wǒ tóngyì nǐ de kànfǎ", 1],
+    ["Opinions", "À mon avis, c'est une bonne idée.", "我觉得这是个好主意。 wǒ juéde zhè shì ge hǎo zhǔyi", 2],
+    ["Opinions", "Je n'ai pas bien compris la question.", "我没听懂这个问题。 wǒ méi tīngdǒng zhège wèntí", 2],
+    ["Opinions", "Cela dépend de la situation.", "这要看具体情况。 zhè yào kàn jùtǐ qíngkuàng", 3],
+    ["Opinions", "Malgré les difficultés, nous avons réussi.", "尽管有困难，我们还是成功了。 jǐnguǎn yǒu kùnnan, wǒmen háishi chénggōng le", 3]
+  ],
+  ar: [
+    ["Se présenter", "Bonjour, je m'appelle Marie.", "مرحباً، اسمي ماري. marḥaban, ismī Mārī", 0],
+    ["Se présenter", "Enchanté de vous rencontrer.", "تشرفنا. tasharrafnā", 0],
+    ["Se présenter", "Je viens de France.", "أنا من فرنسا. anā min Faransā", 0],
+    ["Se présenter", "Je parle un peu arabe.", "أتكلم العربية قليلاً. atakallam al-ʿarabiyya qalīlan", 1],
+    ["Se présenter", "Pouvez-vous répéter, s'il vous plaît ?", "هل يمكنك أن تعيد ذلك من فضلك؟ hal yumkinuka an tuʿīda dhālika min faḍlika", 1],
+    ["Restaurant", "Une table pour deux, s'il vous plaît.", "طاولة لشخصين من فضلك. ṭāwila li-shakhṣayn min faḍlika", 0],
+    ["Restaurant", "Je voudrais un café, s'il vous plaît.", "أريد قهوة من فضلك. urīd qahwa min faḍlika", 0],
+    ["Restaurant", "Qu'est-ce que vous me conseillez ?", "ماذا تنصحني أن آكل؟ mādhā tanṣaḥunī an ākul", 1],
+    ["Restaurant", "L'addition, s'il vous plaît.", "الحساب من فضلك. al-ḥisāb min faḍlika", 0],
+    ["Restaurant", "Je suis allergique aux noix.", "عندي حساسية من المكسرات. ʿindī ḥassāsiyya min al-mukassarāt", 2],
+    ["Transports", "Où est la gare ?", "أين محطة القطار؟ ayna maḥaṭṭat al-qiṭār", 0],
+    ["Transports", "À quelle heure part le prochain train ?", "متى يغادر القطار القادم؟ matā yughādir al-qiṭār al-qādim", 1],
+    ["Transports", "Un billet pour Le Caire, s'il vous plaît.", "تذكرة إلى القاهرة من فضلك. tadhkira ilā al-Qāhira min faḍlika", 1],
+    ["Transports", "Je me suis perdu.", "لقد ضللت الطريق. laqad ḍalaltu al-ṭarīq", 1],
+    ["Transports", "Mon vol a été annulé.", "تم إلغاء رحلتي. tamma ilghāʾ riḥlatī", 2],
+    ["Courses", "Combien ça coûte ?", "كم يكلف هذا؟ kam yukallif hādhā", 0],
+    ["Courses", "Je regarde seulement, merci.", "أنا أتفرج فقط، شكراً. anā atafarraj faqaṭ, shukran", 1],
+    ["Courses", "Avez-vous une taille plus grande ?", "هل لديك مقاس أكبر؟ hal ladayka maqās akbar", 1],
+    ["Courses", "Puis-je payer par carte ?", "هل يمكنني الدفع بالبطاقة؟ hal yumkinunī al-dafʿ bil-biṭāqa", 1],
+    ["Courses", "Je voudrais être remboursé.", "أريد استرداد المبلغ. urīd istirdād al-mablagh", 2],
+    ["Santé", "J'ai mal à la tête.", "عندي صداع. ʿindī ṣudāʿ", 0],
+    ["Santé", "J'ai besoin d'un médecin.", "أحتاج إلى طبيب. aḥtāj ilā ṭabīb", 1],
+    ["Santé", "Je ne me sens pas bien depuis hier.", "لا أشعر بخير منذ الأمس. lā ashʿur bi-khayr mundhu al-amsi", 2],
+    ["Santé", "Où est la pharmacie la plus proche ?", "أين أقرب صيدلية؟ ayna aqrab ṣaydaliyya", 1],
+    ["Santé", "Pouvez-vous appeler une ambulance ?", "هل يمكنك استدعاء سيارة إسعاف؟ hal yumkinuka istidʿāʾ sayyārat isʿāf", 2],
+    ["Travail", "J'ai une réunion à dix heures.", "عندي اجتماع في الساعة العاشرة. ʿindī ijtimāʿ fī al-sāʿa al-ʿāshira", 1],
+    ["Travail", "Pouvez-vous m'envoyer le document par e-mail ?", "هل يمكنك إرسال الملف بالبريد الإلكتروني؟ hal yumkinuka irsāl al-malaff bil-barīd al-iliktrūnī", 2],
+    ["Travail", "Je travaille dans la finance.", "أعمل في المجال المالي. aʿmal fī al-majāl al-mālī", 1],
+    ["Travail", "Je suis disponible demain après-midi.", "أنا متاح غداً بعد الظهر. anā mutāḥ ghadan baʿd al-ẓuhr", 2],
+    ["Travail", "Je serais ravi de rejoindre votre équipe.", "يسعدني الانضمام إلى فريقكم. yusʿidunī al-inḍimām ilā farīqikum", 3],
+    ["Logement", "Je cherche un appartement à louer.", "أبحث عن شقة للإيجار. abḥath ʿan shaqqa lil-ījār", 1],
+    ["Logement", "Le chauffage ne marche pas.", "التدفئة لا تعمل. al-tadfiʾa lā taʿmal", 1],
+    ["Logement", "Quel est le montant du loyer ?", "كم مبلغ الإيجار؟ kam mablagh al-ījār", 2],
+    ["Logement", "Pouvez-vous réparer la fuite d'eau ?", "هل يمكنك إصلاح تسرب الماء؟ hal yumkinuka iṣlāḥ tasarrub al-māʾ", 2],
+    ["Logement", "Le contrat commence le premier du mois.", "يبدأ العقد في أول الشهر. yabdaʾ al-ʿaqd fī awwal al-shahr", 3],
+    ["Opinions", "Je suis d'accord avec vous.", "أنا أوافقك الرأي. anā uwāfiquka al-raʾy", 1],
+    ["Opinions", "À mon avis, c'est une bonne idée.", "في رأيي، هذه فكرة جيدة. fī raʾyī, hādhihi fikra jayyida", 2],
+    ["Opinions", "Je n'ai pas bien compris la question.", "لم أفهم السؤال جيداً. lam afham al-suʾāl jayyidan", 2],
+    ["Opinions", "Cela dépend de la situation.", "هذا يعتمد على الوضع. hādhā yaʿtamid ʿalā al-waḍʿ", 3],
+    ["Opinions", "Malgré les difficultés, nous avons réussi.", "رغم الصعوبات، نجحنا. raghma al-ṣuʿūbāt, najaḥnā", 3]
+  ]
+};
+
+// ======== Parcours, révision, phrases, écoute, prononciation, cahier d'erreurs, objectif du jour ========
+var XKEY = "quiz_extra_v1", X = {};
+try { X = JSON.parse(localStorage.getItem(XKEY)) || {}; } catch (e) { X = {}; }
+function xs(lang) {
+  var x = X[lang] || (X[lang] = {});
+  x.errs = x.errs || {}; x.psrs = x.psrs || {}; x.passed = x.passed || {}; x.chat = x.chat || [];
+  return x;
+}
+function saveX() { try { localStorage.setItem(XKEY, JSON.stringify(X)); } catch (e) { /* stockage indisponible */ } }
+var pBy = {};
+["en", "es", "zh", "ar"].forEach(function (l) { pBy[l] = {}; PHR[l].forEach(function (p) { pBy[l][p[1]] = p; }); });
+
+// Une « référence » désigne un mot ("w:" + clé du mot) ou une phrase ("p:" + phrase française)
+function itemOf(lang, ref) { return ref.charAt(0) === "w" ? byKey[lang][ref.slice(2)] : pBy[lang][ref.slice(2)]; }
+function recordError(lang, ref) {
+  var x = xs(lang), e = x.errs[ref] || (x.errs[ref] = { n: 0, ok: 0, d: 0 });
+  e.n++; e.ok = 0; e.d = Date.now(); saveX();
+}
+function recordFix(lang, ref) {
+  var x = xs(lang), e = x.errs[ref];
+  if (!e) return;
+  e.ok++;
+  if (e.ok >= 2) delete x.errs[ref];
+  saveX();
+}
+function errCount(lang) { var x = xs(lang), n = 0; for (var k in x.errs) if (itemOf(lang, k)) n++; return n; }
+function srsMark(lang, ref, ok) {
+  var store = ref.charAt(0) === "w" ? st[lang].srs : xs(lang).psrs;
+  srsUpdate({ srs: store }, ref.slice(2), ok);
+}
+function dueRefs(lang, now) {
+  var out = [], s = st[lang].srs, p = xs(lang).psrs, k;
+  for (k in s) if (s[k].d <= now && byKey[lang][k]) out.push({ ref: "w:" + k, d: s[k].d });
+  for (k in p) if (p[k].d <= now && pBy[lang][k]) out.push({ ref: "p:" + k, d: p[k].d });
+  out.sort(function (a, b) { return a.d - b.d; });
+  return out.map(function (o) { return o.ref; });
+}
+
+// ---- Parcours : niveau en cours ----
+function currentLevel(lang) {
+  var x = xs(lang), start = (typeof x.placed === "number" && x.placed >= 0) ? x.placed + 1 : 0;
+  for (var l = start; l < 6; l++) if (!x.passed[l]) return l;
+  return 5;
+}
+function learned(lang, it, solid) { var e = st[lang].srs[keyOf(it)]; return !!(e && e.n >= (solid ? 3 : 1)); }
+function levelStats(lang, l) {
+  var b = bands[lang][l], n = 0, sol = 0, i, pn = 0, pt = 0, p = xs(lang).psrs;
+  for (i = 0; i < b.length; i++) { if (learned(lang, b[i])) n++; if (learned(lang, b[i], true)) sol++; }
+  PHR[lang].forEach(function (it) { if (it[3] === l) { pt++; if (p[it[1]] && p[it[1]].n >= 1) pn++; } });
+  return { total: b.length, learned: n, solid: sol, pTotal: pt, pLearned: pn };
+}
+function recordTestResult() {
+  var lang = cur, t = ev[lang], x = xs(lang);
+  if (t.kind === "place") x.placed = placeLevel(bandStats(t));
+  else {
+    var ok = 0;
+    t.qs.forEach(function (q) { if (q.ok) ok++; });
+    if (ok / t.qs.length >= PASS_RATE) x.passed[t.level] = dayKey(new Date());
+  }
+  saveX();
+}
+
+// ---- Objectif quotidien et série ----
+var GOAL_KEY = "quiz_goal_v1";
+function goalMin() { try { var v = parseInt(localStorage.getItem(GOAL_KEY), 10); return v > 0 ? v : 20; } catch (e) { return 20; } }
+function dayTotal(dk) { var t = 0, o = temps[dk]; if (!o) return 0; for (var l in o) t += (o[l].ecrit || 0) + (o[l].oral || 0); return t; }
+function streakDays() {
+  var g = goalMin() * 60000, n = 0, i = dayTotal(dayKey(new Date())) >= g ? 0 : 1;
+  while (i < 400 && dayTotal(dayKey(new Date(Date.now() - i * DAY))) >= g) { n++; i++; }
+  return n;
+}
+function goalHtml() {
+  var g = goalMin(), t = dayTotal(dayKey(new Date())), pct = Math.min(100, Math.round(100 * t / (g * 60000)));
+  return '<div class="goal" id="goalbar"><div class="goal-top"><span>🎯 Aujourd\'hui : <b>' + Math.floor(t / 60000) + ' / ' + g + ' min</b>' +
+    (pct >= 100 ? ' ✔' : '') + '</span><span>🔥 Série : <b>' + streakDays() + ' j</b></span></div>' +
+    '<div class="progress"><div style="width:' + pct + '%"></div></div></div>';
+}
+function goalPickHtml() {
+  var g = goalMin(), h = '<div class="fr" style="margin-top:14px">Objectif quotidien</div><p class="pic-note">Choisis le temps que tu t\'engages à travailler chaque jour. La série compte les jours de suite où tu l\'atteins.</p><div class="btns">';
+  [10, 20, 30, 45, 60].forEach(function (m) { h += '<button data-act="goal" data-min="' + m + '"' + (m === g ? '' : ' class="alt"') + '>' + m + ' min</button>'; });
+  return h + '</div>';
+}
+setInterval(function () { var el = document.getElementById("goalbar"); if (el) el.outerHTML = goalHtml(); }, 10000);
+
+// ---- Séries d'exercices ----
+function optsFor(lang, ref, side) {
+  var it = itemOf(lang, ref), pool = ref.charAt(0) === "w" ? DATA[lang] : PHR[lang], correct = it[side], same = [], others = [];
+  for (var i = 0; i < pool.length; i++) {
+    var o = pool[i], v = o[side];
+    if (o === it || v === correct) continue;
+    if (o[0] === it[0]) { if (same.indexOf(v) < 0) same.push(v); } else if (others.length < 200 && others.indexOf(v) < 0) others.push(v);
+  }
+  shuffle(same); shuffle(others);
+  var wrong = same.slice(0, 3);
+  if (wrong.length < 3) wrong = wrong.concat(others.slice(0, 3 - wrong.length));
+  return shuffle([correct].concat(wrong));
+}
+function pickPhrases(lang, N) {
+  var p = xs(lang).psrs, now = Date.now(), due = [], fresh = [], later = [];
+  PHR[lang].forEach(function (it) { var e = p[it[1]]; if (!e) fresh.push(it); else if (e.d <= now) due.push(it); else later.push(it); });
+  due.sort(function (a, b) { return p[a[1]].d - p[b[1]].d; });
+  later.sort(function (a, b) { return p[a[1]].d - p[b[1]].d; });
+  fresh.sort(function (a, b) { return (a[3] + Math.random() * 0.9) - (b[3] + Math.random() * 0.9); });
+  return due.concat(fresh, later).slice(0, N).map(function (it) { return "p:" + it[1]; });
+}
+function pickLevelWords(lang, N, lvl) {
+  var out = [], l = (lvl == null) ? currentLevel(lang) : lvl;
+  for (; l < 6 && out.length < N; l++) {
+    var b = bands[lang][l];
+    for (var i = 0; i < b.length && out.length < N; i++) if (!learned(lang, b[i])) out.push("w:" + keyOf(b[i]));
+    if (lvl != null) break;
+  }
+  return out;
+}
+function pickMixed(lang, N, phrasesOnly) {
+  var lvl = currentLevel(lang), ph = PHR[lang].filter(function (it) { return it[3] <= Math.min(3, lvl + 1); });
+  shuffle(ph);
+  var refs = ph.slice(0, phrasesOnly ? N : Math.ceil(N / 2)).map(function (it) { return "p:" + it[1]; });
+  if (!phrasesOnly) {
+    var ws = bands[lang][Math.min(5, lvl)].slice();
+    shuffle(ws);
+    ws.slice(0, N - refs.length).forEach(function (it) { refs.push("w:" + keyOf(it)); });
+    shuffle(refs);
+  }
+  return refs;
+}
+function buildDrill(lang, kind, lvl) {
+  var N = 10, k;
+  if (kind === "review") return dueRefs(lang, Date.now()).slice(0, N);
+  if (kind === "errors") {
+    var x = xs(lang), arr = [];
+    for (k in x.errs) if (itemOf(lang, k)) arr.push(k);
+    arr.sort(function (a, b) { return x.errs[b].n - x.errs[a].n; });
+    return arr.slice(0, N);
+  }
+  if (kind === "phrases") return pickPhrases(lang, N);
+  if (kind === "level") return pickLevelWords(lang, N, lvl);
+  if (kind === "listen") return pickMixed(lang, N, false);
+  if (kind === "dictee") return pickMixed(lang, N, true);
+  if (kind === "speak") return pickMixed(lang, 8, true);
+  return [];
+}
+var dr = {};
+function startDrill(kind, lvl) {
+  var lang = cur, refs = buildDrill(lang, kind, lvl);
+  dr[lang] = { kind: kind, refs: refs, i: 0, ok: 0, lvl: lvl, state: refs.length ? "run" : "empty", mic: "off", res: null, err: "" };
+  mode[lang] = "drill";
+  answered = false;
+  render();
+}
+var DR_TITLE = { review: "Révision", errors: "Cahier d'erreurs", phrases: "Phrases utiles", level: "Étude du niveau", listen: "Écoute", dictee: "Dictée", speak: "Prononciation" };
+function drillResult(lang, ref, ok) {
+  var d = dr[lang];
+  if (ok) d.ok++;
+  if (d.kind === "review" || d.kind === "errors" || d.kind === "phrases" || d.kind === "level") srsMark(lang, ref, ok);
+  if (ok) recordFix(lang, ref); else recordError(lang, ref);
+  persist(); saveX();
+}
+function drillPick(value) {
+  var lang = cur, d = dr[lang];
+  if (answered || !d || d.state !== "run") return;
+  var ref = d.refs[d.i], it = itemOf(lang, ref), side = d.kind === "listen" ? 1 : 2, ok = value === it[side];
+  answered = true;
+  drillResult(lang, ref, ok);
+  showFeedback(it[side], ok);
+  var fb = document.getElementById("fb");
+  if (fb && side === 1) fb.innerHTML += '<div class="ex">' + esc(it[2]) + '</div>';
+  if (fb && ref.charAt(0) === "p" && side === 2) fb.innerHTML += '<div class="ex"><em>' + esc(it[1]) + '</em></div>';
+  speak(lang, it[2]);
+}
+function drillNext() {
+  var d = dr[cur];
+  answered = false;
+  d.i++; d.res = null; d.err = ""; d.mic = "off";
+  if (d.i >= d.refs.length) d.state = "end";
+  render();
+}
+function foldTxt(s) { return String(s).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[’‘]/g, "'"); }
+function checkDictee() {
+  var lang = cur, d = dr[lang], inp = document.getElementById("dict-in");
+  if (answered || !inp || !d || d.state !== "run") return;
+  var txt = inp.value.trim();
+  if (!txt) return;
+  var ref = d.refs[d.i], it = itemOf(lang, ref);
+  answered = true;
+  var r = compareReading(lang, foldTxt(it[2]), foldTxt(txt)), ok = r.score >= 90;
+  drillResult(lang, ref, ok);
+  inp.disabled = true;
+  var fb = document.getElementById("fb");
+  fb.className = "feedback " + (ok ? "ok" : "bad");
+  fb.innerHTML = (ok ? "✔ Juste" : "✘ Pas tout à fait") + '<div class="ex">' + esc(it[2]) + '<br><em>' + esc(it[1]) + '</em></div>' +
+    (!ok && r.feedback.length ? '<div class="fb-list">' + r.feedback.slice(0, 4).map(function (f) { return '<p>' + esc(f) + '</p>'; }).join("") + '</div>' : '');
+  var nx = document.querySelector('button[data-act="next"]');
+  if (nx) { nx.disabled = false; nx.focus(); }
+}
+function speakStart() {
+  var R = window.SpeechRecognition || window.webkitSpeechRecognition, lang = cur, d = dr[lang];
+  if (!R || !d || answered || d.mic === "on") return;
+  var ref = d.refs[d.i], it = itemOf(lang, ref), target = cleanForSpeech(lang, it[2]), got = false;
+  var rec = new R();
+  rec.lang = SPEECH_LANG[lang]; rec.continuous = false; rec.interimResults = false; rec.maxAlternatives = 3;
+  d.mic = "on"; d.err = "";
+  rec.onresult = function (e) {
+    got = true;
+    var best = null;
+    for (var i = 0; i < e.results[0].length; i++) {
+      var c = compareReading(lang, target, e.results[0][i].transcript);
+      if (!best || c.score > best.score) best = c;
+    }
+    d.res = best; d.mic = "off"; answered = true;
+    drillResult(lang, ref, best.score >= 75);
+    render();
+  };
+  rec.onerror = function (e) {
+    d.mic = "off";
+    d.err = (e.error === "not-allowed" || e.error === "service-not-allowed") ? "Accès au micro refusé. Autorise le micro dans le navigateur pour cette page." : "Je n'ai rien entendu, réessaie.";
+    if (!got) render();
+  };
+  rec.onend = function () { if (!got && d.mic === "on") { d.mic = "off"; d.err = "Je n'ai rien entendu, réessaie."; render(); } };
+  try { rec.start(); } catch (err) { d.mic = "off"; d.err = "Le micro ne peut pas démarrer."; }
+  render();
+}
+
+function renderDrill() {
+  var lang = cur, d = dr[lang], h = menuHtml(), stage = document.getElementById("stage"), head = '<div class="cat">' + LABEL[lang] + ' · ' + DR_TITLE[d.kind] + '</div>';
+  if (d.state === "empty") {
+    var msg = { review: "Rien à réviser pour l'instant : tout est à jour. Reviens plus tard, ou apprends de nouvelles phrases.", errors: "Ton cahier d'erreurs est vide. Bravo !", level: "Tous les mots de ce niveau sont déjà appris. Passe le test pour le valider." }[d.kind] || "Rien à faire pour l'instant.";
+    stage.innerHTML = h + '<div class="card done">' + head + '<div class="fr">' + msg + '</div><div class="btns"><button data-act="go-path">Voir mon parcours</button><button class="alt" data-act="go-phrases">Phrases utiles</button></div></div>';
+    return;
+  }
+  if (d.state === "end") {
+    var n = d.refs.length, pct = Math.round(100 * d.ok / n);
+    stage.innerHTML = h + '<div class="card done">' + head + '<div class="verdict">' + d.ok + ' / ' + n + ' (' + pct + ' %)</div>' +
+      '<p>' + (pct >= 80 ? 'Très bien, continue comme ça.' : (pct >= 50 ? 'Pas mal. Les erreurs sont dans ton cahier pour les retravailler.' : 'Les erreurs sont notées dans ton cahier : refais une série, ça rentre à force de répéter.')) + '</p>' +
+      '<div class="btns"><button data-act="dr-again">Encore une série</button><button class="alt" data-act="go-book">Cahier d\'erreurs</button><button class="alt" data-act="go-path">Mon parcours</button></div></div>';
+    return;
+  }
+  var ref = d.refs[d.i], it = itemOf(lang, ref), total = d.refs.length, cls = (lang === "zh" || lang === "ar") ? ' class="zh"' : '', j, o;
+  h += '<div class="bar"><span>' + LABEL[lang] + ' · ' + DR_TITLE[d.kind] + ' · <b>' + (d.i + 1) + '</b> sur ' + total + '</span></div>' +
+    '<div class="progress"><div style="width:' + Math.round(100 * d.i / total) + '%"></div></div>';
+  var nextBtn = '<div class="actions"><button data-act="next" disabled>' + (d.i + 1 < total ? 'Suivant →' : 'Terminer →') + '</button></div>';
+  var kind = d.kind;
+  if (kind === "dictee" && (lang === "en" || lang === "es")) {
+    h += '<div class="card">' + head + '<div class="fr">Écoute la phrase et écris-la</div>' +
+      '<button class="speak" data-act="speak" data-text="' + esc(it[2]) + '">🔊 Écouter</button>' +
+      '<input id="dict-in" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Écris ce que tu entends">' +
+      '<div class="btns"><button data-act="dr-check">Vérifier</button></div><div id="fb" class="feedback"></div>' + nextBtn + '</div>' +
+      '<div class="hint">Les accents ne comptent pas. Entrée pour vérifier.</div>';
+  } else if (kind === "speak") {
+    var arCls = lang === "ar" ? " ar" : "";
+    h += '<div class="card">' + head + '<div class="fr">Dis cette phrase à voix haute</div>' +
+      '<p class="reftext' + arCls + '">' + esc(it[2]) + '</p><p class="pic-note">' + esc(it[1]) + '</p>' +
+      '<button class="speak" data-act="speak" data-text="' + esc(it[2]) + '">🔊 Écouter le modèle</button>';
+    var canListen = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+    if (!answered) {
+      if (d.mic === "on") h += '<p class="live"><span class="mic-dot"></span> Micro ouvert, parle maintenant…</p>';
+      else if (canListen) h += '<div class="btns"><button data-act="dr-mic">🎙 Parler</button><button class="alt" data-act="dr-skip">Passer</button></div>';
+      else h += '<p class="pic-note">La correction vocale demande Chrome ou Edge. Tu peux écouter le modèle et passer.</p><div class="btns"><button class="alt" data-act="dr-skip">Passer</button></div>';
+      if (d.err) h += '<p class="fb-err">' + esc(d.err) + '</p>';
+    } else {
+      var r = d.res, okS = r.score >= 75;
+      h += '<div class="verdict">' + (okS ? '✔ ' : '✘ ') + r.score + ' %</div><p class="heard">Ce que j\'ai entendu : ' + esc(r.heard || "rien") + '</p>' +
+        (r.feedback.length ? '<div class="fb-list">' + r.feedback.slice(0, 4).map(function (f) { return '<p>' + esc(f) + '</p>'; }).join("") + '</div>' : '<p class="fb-ok">Prononciation parfaite !</p>') +
+        '<div class="btns"><button class="alt" data-act="dr-retry">Réessayer</button></div>';
+    }
+    h += '<div class="actions"><button data-act="next"' + (answered ? '' : ' disabled') + '>' + (d.i + 1 < total ? 'Suivant →' : 'Terminer →') + '</button></div></div>';
+  } else {
+    var side = (kind === "listen") ? 1 : 2, opts = optsFor(lang, ref, side), listen = (kind === "listen" || kind === "dictee");
+    var prompt = kind === "listen" ? 'Écoute et choisis le sens' : (kind === "dictee" ? 'Écoute et choisis la bonne écriture' : 'Comment dit-on « <strong>' + esc(it[1]) + '</strong> » ?');
+    h += '<div class="card">' + head + '<div class="fr">' + prompt + '</div>' +
+      (listen ? '<button class="speak" data-act="speak" data-text="' + esc(it[2]) + '">🔊 Écouter</button>' : '') + '<div class="opts">';
+    for (j = 0; j < opts.length; j++) h += '<label' + (side === 2 ? cls : '') + '><input type="checkbox" data-val="' + esc(opts[j]) + '"> <span>' + esc(opts[j]) + '</span></label>';
+    h += '</div><div id="fb" class="feedback"></div>' + (!listen ? '<button class="speak" data-act="speak" data-text="' + esc(it[2]) + '">🔊 Écouter la réponse</button>' : '') + nextBtn + '</div>' +
+      '<div class="hint">Touches 1 à 4 pour choisir, Entrée pour passer à la suite</div>';
+  }
+  stage.innerHTML = h;
+  if (!answered && (kind === "listen" || kind === "dictee")) setTimeout(function () { if (!answered && mode[cur] === "drill") speak(lang, it[2]); }, 300);
+  if (kind === "dictee" && (lang === "en" || lang === "es") && !answered) { var inp = document.getElementById("dict-in"); if (inp) inp.focus(); }
+}
+
+function renderListenMenu() {
+  var lang = cur, typed = (lang === "en" || lang === "es");
+  document.getElementById("stage").innerHTML = menuHtml() + '<div class="card"><div class="cat">' + LABEL[lang] + ' · écoute</div><div class="fr">Entraîne ton oreille</div>' +
+    '<p>Sans l\'oreille, on comprend à l\'écrit mais pas quand on te parle. Écoute chaque phrase, puis choisis ce qu\'elle veut dire ou écris-la.</p>' +
+    '<div class="btns"><button data-act="dr-start" data-kind="listen">Comprendre : j\'écoute et je choisis le sens</button>' +
+    '<button class="alt" data-act="dr-start" data-kind="dictee">' + (typed ? 'Dictée : j\'écoute et j\'écris' : 'Dictée : j\'écoute et je choisis l\'écriture') + '</button></div>' +
+    '<p class="pic-note">Le son vient de ton navigateur. Mets le volume.</p></div>';
+}
+
+function renderPath() {
+  var lang = cur, names = LEVELS[lang], x = xs(lang), cl = currentLevel(lang), due = dueRefs(lang, Date.now()).length, ec = errCount(lang);
+  var h = menuHtml() + '<div class="card"><div class="cat">' + LABEL[lang] + ' · ton parcours</div><div class="fr">Plan du jour</div>' +
+    '<p>Dans cet ordre, ça te prend environ ' + goalMin() + ' minutes : réviser, apprendre du neuf, écouter, parler.</p><div class="btns">' +
+    '<button data-act="go-review">1. Réviser' + (due ? ' (' + due + ')' : '') + '</button>' +
+    '<button class="alt" data-act="go-phrases">2. Phrases utiles</button>' +
+    '<button class="alt" data-act="dr-start" data-kind="level">3. Nouveaux mots</button>' +
+    '<button class="alt" data-act="go-listen">4. Écoute</button>' +
+    '<button class="alt" data-act="go-speak">5. Prononcer</button>' +
+    (ec ? '<button class="alt" data-act="go-book">Cahier d\'erreurs (' + ec + ')</button>' : '') + '</div>';
+  if (typeof x.placed === "number") h += '<p class="pic-note">Test de placement : ' + (x.placed >= 0 ? 'niveau acquis ' + names[x.placed] : 'en dessous de ' + names[0]) + '.</p>';
+  h += '</div><div class="card"><div class="cat">' + LABEL[lang] + '</div><div class="fr">Les niveaux, un par un</div>' +
+    '<p class="pic-note">Un niveau est validé quand tu réussis son test à ' + Math.round(PASS_RATE * 100) + ' %. Un mot compte comme appris dès qu\'il est réussi, et solide après trois réussites espacées.</p>';
+  for (var l = 0; l < 6; l++) {
+    var s = levelStats(lang, l), pc = s.total ? Math.round(100 * s.learned / s.total) : 0, solidPc = s.total ? Math.round(100 * s.solid / s.total) : 0;
+    h += '<div class="lvl' + (l === cl ? ' cur' : '') + '"><div class="lvl-top"><span>' + names[l] + '</span>' +
+      (x.passed[l] ? '<span class="tagok">✔ validé le ' + esc(x.passed[l]) + '</span>' : (l === cl ? '<span class="tagok">← niveau en cours</span>' : '')) + '</div>' +
+      '<div class="bar2"><div class="solid" style="width:' + solidPc + '%"></div><div style="width:' + Math.max(0, pc - solidPc) + '%"></div></div>' +
+      '<small>Mots : ' + s.learned + ' appris sur ' + s.total + ' (dont ' + s.solid + ' solides)' + (s.pTotal ? ' · Phrases : ' + s.pLearned + ' / ' + s.pTotal : '') + '</small>' +
+      '<div class="btns"><button class="sm" data-act="dr-start" data-kind="level" data-lvl="' + l + '">Étudier ce niveau</button>' +
+      '<button class="sm alt" data-act="start-level" data-level="' + l + '">Tester</button></div></div>';
+  }
+  document.getElementById("stage").innerHTML = h + '</div>';
+}
+
+function renderBook() {
+  var lang = cur, x = xs(lang), arr = [], k, h = menuHtml();
+  for (k in x.errs) { var it = itemOf(lang, k); if (it) arr.push({ ref: k, it: it, e: x.errs[k] }); }
+  arr.sort(function (a, b) { return b.e.n - a.e.n || b.e.d - a.e.d; });
+  h += '<div class="card"><div class="cat">' + LABEL[lang] + ' · cahier d\'erreurs</div><div class="fr">Ce que tu rates le plus</div>';
+  if (!arr.length) h += '<p>Rien pour l\'instant. Chaque mot ou phrase raté arrive ici, et en sort quand tu le réussis deux fois de suite.</p>';
+  else {
+    h += '<div class="btns"><button data-act="dr-start" data-kind="errors">Retravailler ces erreurs (' + arr.length + ')</button></div>';
+    arr.slice(0, 30).forEach(function (a) {
+      var cls = (lang === "zh" || lang === "ar") ? ' class="zh"' : '';
+      h += '<div class="err-item"><span><small>' + esc(a.it[1]) + '</small><br><b' + cls + '>' + esc(a.it[2]) + '</b></span>' +
+        '<span class="err-n"><button class="sm alt" data-act="speak" data-text="' + esc(a.it[2]) + '">🔊</button><br>' + a.e.n + ' faute' + (a.e.n > 1 ? 's' : '') + '</span></div>';
+    });
+    if (arr.length > 30) h += '<p class="pic-note">Et ' + (arr.length - 30) + ' autres.</p>';
+  }
+  h += '</div>';
+  if (x.chat.length) {
+    h += '<div class="card"><div class="cat">Corrections de tes conversations</div><div class="fb-list">' +
+      x.chat.slice(0, 15).map(function (c) { return '<p><strong>' + esc(c.wrong) + '</strong> → <strong>' + esc(c.right) + '</strong>' + (c.why ? ' · ' + esc(c.why) : '') + '</p>'; }).join("") + '</div></div>';
+  }
+  document.getElementById("stage").innerHTML = h;
+}
+function saveChatCorrections(lang, list) {
+  var x = xs(lang);
+  list.forEach(function (c) { if (c && c.wrong && c.right) x.chat.unshift({ wrong: String(c.wrong), right: String(c.right), why: String(c.why || ""), d: Date.now() }); });
+  x.chat = x.chat.slice(0, 40);
+  saveX();
+}
+function chatToken() {
+  try {
+    for (var i = 0; i < localStorage.length; i++) {
+      var k = localStorage.key(i);
+      if (/^sb-.*-auth-token$/.test(k)) { var v = JSON.parse(localStorage.getItem(k)); return v && (v.access_token || (v.currentSession && v.currentSession.access_token)) || ""; }
+    }
+  } catch (e) { /* pas de session lisible */ }
+  return "";
+}
+
 // ---- Affichage ----
 function menuHtml() {
-  var m = mode[cur] || "quiz", e = ev[cur] || {};
-  var which = m === "quiz" ? "quiz" : (m === "levels" ? "levels" : (m === "test" || m === "result" ? (e.kind === "place" ? "place" : "levels") : m));
+  var m = mode[cur] || "quiz", e = ev[cur] || {}, d = dr[cur] || {}, which = m;
+  if (m === "test" || m === "result") which = (e.kind === "place") ? "place" : "levels";
+  if (m === "drill") which = ({ review: "review", errors: "book", phrases: "phrases", level: "path", listen: "listen", dictee: "listen", speak: "speak" })[d.kind] || "";
+  if (m === "listenmenu") which = "listen";
   function b(act, label, id) { return '<button data-act="' + act + '"' + (which === id ? ' class="on"' : '') + '>' + label + '</button>'; }
-  return '<div class="menu">' + b("go-quiz", "Vocabulaire", "quiz") + b("go-place", "Connaître mon niveau", "place") +
+  var due = dueRefs(cur, Date.now()).length, ec = errCount(cur);
+  return goalHtml() + '<div class="menu">' + b("go-path", "Parcours", "path") + b("go-quiz", "Vocabulaire", "quiz") + b("go-phrases", "Phrases", "phrases") +
+    b("go-review", "Réviser" + (due ? " (" + due + ")" : ""), "review") + b("go-listen", "Écoute", "listen") + b("go-speak", "Prononcer", "speak") +
+    b("go-book", "Cahier d'erreurs" + (ec ? " (" + ec + ")" : ""), "book") + b("go-place", "Connaître mon niveau", "place") +
     b("go-levels", "Passer le test d'un niveau", "levels") + b("go-read", "Lecture à voix haute", "read") +
     b("go-chat", "Conversation", "chat") + b("go-time", "Mon temps", "time") + '</div>';
 }
 
 function render() {
   var m = mode[cur] || "quiz";
+  if (m === "drill") return renderDrill();
+  if (m === "listenmenu") return renderListenMenu();
+  if (m === "path") return renderPath();
+  if (m === "book") return renderBook();
   if (m === "read") return renderRead();
   if (m === "chat") return renderChat();
   if (m === "time") return renderTime();
@@ -13285,6 +13849,19 @@ document.addEventListener("click", function (e) {
   else if (act === "c-mic") dictate();
   else if (act === "reset") { delete saved[cur]; answered = false; load(cur); render(); }
   else if (act === "go-quiz") { mode[cur] = "quiz"; answered = false; render(); }
+  else if (act === "go-path") { mode[cur] = "path"; answered = false; render(); }
+  else if (act === "go-book") { mode[cur] = "book"; answered = false; render(); }
+  else if (act === "go-listen") { mode[cur] = "listenmenu"; answered = false; render(); }
+  else if (act === "go-phrases") startDrill("phrases");
+  else if (act === "go-review") startDrill("review");
+  else if (act === "go-speak") startDrill("speak");
+  else if (act === "dr-start") startDrill(t.getAttribute("data-kind"), t.hasAttribute("data-lvl") ? parseInt(t.getAttribute("data-lvl"), 10) : undefined);
+  else if (act === "dr-again") startDrill(dr[cur].kind, dr[cur].lvl);
+  else if (act === "dr-check") checkDictee();
+  else if (act === "dr-mic") speakStart();
+  else if (act === "dr-skip") { answered = true; drillNext(); }
+  else if (act === "dr-retry") { var dd = dr[cur]; if (dd.res && dd.res.score >= 75) dd.ok--; dd.res = null; dd.mic = "off"; dd.err = ""; answered = false; render(); }
+  else if (act === "goal") { try { localStorage.setItem(GOAL_KEY, t.getAttribute("data-min")); } catch (er) { /* stockage indisponible */ } render(); }
   else if (act === "go-place") startTest("place");
   else if (act === "go-levels") { mode[cur] = "levels"; answered = false; render(); }
   else if (act === "start-level") startTest("level", parseInt(t.getAttribute("data-level"), 10));
@@ -13299,6 +13876,10 @@ document.addEventListener("click", function (e) {
 });
 
 document.addEventListener("keydown", function (e) {
+  if (e.target && e.target.id === "dict-in") {
+    if (e.key === "Enter" && !answered) { e.preventDefault(); e.stopImmediatePropagation(); checkDictee(); }
+    return;
+  }
   if (answered && e.key === "Enter") { next(); return; }
   if (!answered && /^[1-4]$/.test(e.key)) {
     var boxes = document.querySelectorAll("#stage input[type=checkbox]");
