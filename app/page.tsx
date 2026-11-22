@@ -61,7 +61,10 @@ export default function Home() {
   useEffect(() => {
     if (!user) { setFirstName(""); return; }
     const meta = (user.user_metadata?.first_name as string | undefined)?.trim();
-    if (meta) { setFirstName(meta); return; }
+    const remember = (name: string) => {
+      try { localStorage.setItem("famal_first_name", JSON.stringify({ id: user.id, name })); } catch { /* sans stockage, pas grave */ }
+    };
+    if (meta) { setFirstName(meta); remember(meta); return; }
     let alive = true;
     supabase
       ?.from("profiles")
@@ -70,7 +73,7 @@ export default function Home() {
       .maybeSingle()
       .then(({ data }) => {
         const n = (data?.first_name as string | undefined)?.trim();
-        if (alive && n) setFirstName(n);
+        if (alive && n) { setFirstName(n); remember(n); }
       });
     return () => { alive = false; };
   }, [user]);

@@ -20,6 +20,31 @@
   } catch (e) { ok = true; /* stockage inaccessible : on ne bloque pas */ }
   if (!ok) location.replace("/?connexion=langue");
 })();
+
+/* Prénom du compte connecté (pas de prénom en dur) : d'abord celui de la session,
+   sinon celui mémorisé par FAMAL / JamsPlans pour ce même compte. */
+window.famalFirstName = function(){
+  try {
+    for (var i = 0; i < localStorage.length; i++) {
+      var k = localStorage.key(i);
+      if (!/^sb-.*-auth-token$/.test(k)) continue;
+      var v = JSON.parse(localStorage.getItem(k) || "null");
+      var u = v && v.user;
+      if (!u) continue;
+      var n = u.user_metadata && u.user_metadata.first_name;
+      if (n && String(n).trim()) return String(n).trim();
+      var c = JSON.parse(localStorage.getItem("famal_first_name") || "null");
+      if (c && c.id === u.id && c.name) return String(c.name).trim();
+    }
+  } catch (e) {}
+  return "";
+};
+
+document.addEventListener("DOMContentLoaded", function(){
+  var n = window.famalFirstName();
+  var el = document.getElementById("helloName");
+  if (el) el.textContent = n ? "Salut " + n : "Salut";
+});
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
@@ -159,7 +184,7 @@ textarea:focus { outline: none; border-color: #C6F432; }
 </head>
 <body>
 <a href="/" style="display:inline-block;color:#C6F432;text-decoration:none;font-weight:600;font-size:14px;">← FAMAL</a>
-<h1>Salut Abdoulaye, <em>lâche pas</em> !</h1>
+<h1><span id="helloName">Salut</span>, <em>lâche pas</em> !</h1>
 <p class="intro">Une question à la fois. Choisissez la bonne traduction : la correction s'affiche aussitôt, puis cliquez sur « Suivant » (ou Entrée). Les mots ratés reviennent plus tard jusqu'à être justes, et les mots réussis reviennent de plus en plus tard (répétition espacée). Le bouton 🔊 fait écouter la réponse. Raccourcis : touches 1 à 4 pour choisir. Vos progrès sont gardés sur cet appareil.</p>
 
 <div class="lang-bar">

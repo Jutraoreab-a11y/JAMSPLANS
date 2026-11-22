@@ -4785,6 +4785,8 @@ export function initJamsPlansApp() {
       await dedupePrayerTasks();
       if (loaded.profile){
         state.profile.firstName = loaded.profile.first_name || state.profile.firstName;
+        // Mémorise le prénom du compte pour les autres pages (FAMAL, JAMAL PERMIS, Langue).
+        try { if (state.profile.firstName) localStorage.setItem("famal_first_name", JSON.stringify({ id: state.userId, name: state.profile.firstName })); } catch(_e){}
         state.reminder.enabled = !!loaded.profile.reminder_enabled;
         state.reminder.time = (loaded.profile.reminder_time || "20:00").slice(0,5);
         state.reminder.timezone = loaded.profile.timezone || "Europe/Paris";
