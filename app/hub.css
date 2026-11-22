@@ -79,6 +79,17 @@
 .hub .toast.show{opacity:1; transform:translate(-50%,0);}
 
 @media (max-width:520px){ .hub .hero{padding-top:26px;} .hub .card{padding:20px;} }
+@media (max-width:640px){
+  .hub .wrap{padding:0 16px;}
+  .hub .top{flex-wrap:wrap; gap:10px 12px; padding:16px 0;}
+  .hub .session{flex:1 1 100%; min-width:0; justify-content:space-between;}
+  .hub .session > span{display:none;}
+  .hub .session b{flex:1 1 auto; min-width:0; max-width:none;}
+  .hub .linkbtn{flex:none; white-space:nowrap;}
+  .hub .hero{padding:24px 0 22px;}
+  .hub .hero h1{overflow-wrap:anywhere;}
+  .hub .login{max-width:100%; padding:18px;}
+}
 @media (prefers-reduced-motion:reduce){ .hub *{transition:none !important;} }
 
 /* Connexion (un seul compte pour tous les modules) */
