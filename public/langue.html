@@ -13211,14 +13211,108 @@ function evalAnswer(lang, typed, variants) {
   });
   return { score: Math.max(0, best), model: model };
 }
-function renderChat() {
+// ---- Conversation libre avec une IA (Gemini, offre gratuite) : le serveur tient la clé ----
+function chatToken() {
+  try {
+    for (var i = 0; i < localStorage.length; i++) {
+      var k = localStorage.key(i);
+      if (/^sb-.*-auth-token$/.test(k)) { var v = JSON.parse(localStorage.getItem(k)); return (v && (v.access_token || (v.currentSession && v.currentSession.access_token))) || ""; }
+    }
+  } catch (e) { /* pas de session lisible */ }
+  return "";
+}
+function renderFree() {
   var lang = cur, s = chs[lang], old = document.getElementById("chatin");
+  if (old) s.draft = old.value;
+  var arCls = lang === "ar" ? " ar" : "", canMic = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+  var h = menuHtml() + '<div class="card"><div class="cat">' + LABEL[lang] + ' · conversation libre</div><div class="fr">Sujet : ' + esc(s.topic) + '</div>' +
+    '<p class="pic-note">Tu parles, l\'IA répond et te corrige. Parle ou écris ce que tu veux sur ce sujet.</p><div class="chat" id="chatlog">';
+  for (var i = 0; i < s.msgs.length; i++) {
+    var m = s.msgs[i];
+    h += '<div class="msg ' + m.role + arCls + '">' + esc(m.text) + '</div>';
+    if (m.corrections && m.corrections.length) {
+      h += '<div class="fb-list">' + m.corrections.map(function (c) {
+        return '<p><strong>' + esc(c.wrong) + '</strong> → <strong>' + esc(c.right) + '</strong> · ' + esc(c.why || "") + '</p>';
+      }).join("") + '</div>';
+    }
+  }
+  if (s.busy) h += '<p class="pic-note">…</p>';
+  h += '</div>';
+  if (s.error) h += '<p class="fb-err">' + esc(s.error) + '</p>';
+  h += '<textarea id="chatin" rows="2" placeholder="Écris ou parle ta réponse"' + (s.busy ? " disabled" : "") + '>' + esc(s.draft || "") + '</textarea>' +
+    '<div class="btns"><button data-act="c-send"' + (s.busy ? " disabled" : "") + '>Envoyer</button>' +
+    (canMic ? '<button class="alt" data-act="c-talk"' + (s.busy ? " disabled" : "") + '>🎙 Parler (envoi automatique)</button>' : '') +
+    '<button class="alt" data-act="c-hear">🔊 Réécouter</button>' +
+    '<button class="alt" data-act="c-topic-change">Changer de sujet</button></div></div>';
+  document.getElementById("stage").innerHTML = h;
+  var log = document.getElementById("chatlog");
+  if (log) log.scrollTop = log.scrollHeight;
+}
+function freeCall(lang, s, history) {
+  s.busy = true; s.error = ""; renderFree();
+  return fetch("/api/chat", {
+    method: "POST", headers: { "Content-Type": "application/json", "Authorization": "Bearer " + chatToken() },
+    body: JSON.stringify({ lang: lang, topic: s.topic, messages: history })
+  }).then(function (r) {
+    if (!r.ok) { var er = new Error("status " + r.status); er.status = r.status; throw er; }
+    return r.json();
+  }).then(function (d) {
+    s.busy = false;
+    if (d.corrections && d.corrections.length) {
+      saveChatCorrections(lang, d.corrections);
+      for (var u = s.msgs.length - 1; u >= 0; u--) if (s.msgs[u].role === "user") { s.msgs[u].corrections = d.corrections; break; }
+    }
+    s.msgs.push({ role: "ai", text: d.reply || "" });
+    if (d.reply) speak(lang, d.reply);
+    renderFree();
+  }).catch(function (err) {
+    s.busy = false;
+    s.error = err && err.status === 401 ? "Ta session a expiré : reconnecte-toi depuis l'accueil FAMAL puis reviens ici."
+      : (err && err.status === 503 ? "L'IA n'est pas encore activée sur le serveur (clé GEMINI_API_KEY à ajouter dans Vercel). En attendant, les scènes guidées marchent."
+      : (err && err.status === 429 ? "Le quota gratuit est atteint pour le moment. Réessaie plus tard, ou joue une scène guidée."
+      : "L'IA ne répond pas pour l'instant. Réessaie dans un instant, ou joue une scène guidée."));
+    renderFree();
+  });
+}
+function openFree(lang, topic) {
+  var s = chs[lang];
+  s.free = true; s.topic = topic; s.msgs = []; s.busy = false; s.error = ""; s.draft = "";
+  freeCall(lang, s, []);
+}
+function sendFree() {
+  var lang = cur, s = chs[lang], box = document.getElementById("chatin"), txt = box ? box.value.trim() : "";
+  if (!txt || s.busy) return;
+  s.msgs.push({ role: "user", text: txt, corrections: [] });
+  s.draft = ""; box.value = "";
+  freeCall(lang, s, s.msgs.map(function (m) { return { role: m.role === "ai" ? "assistant" : "user", content: m.text }; }));
+}
+// Un seul bouton : tu parles, la phrase est envoyée toute seule
+function talkFree() {
+  var R = window.SpeechRecognition || window.webkitSpeechRecognition, lang = cur, s = chs[lang];
+  if (!R || s.busy) return;
+  var rec = new R(), got = false;
+  rec.lang = SPEECH_LANG[lang]; rec.continuous = false; rec.interimResults = false;
+  rec.onresult = function (e) {
+    got = true;
+    var box = document.getElementById("chatin");
+    if (box) box.value = (box.value + " " + e.results[0][0].transcript).trim();
+    sendFree();
+  };
+  rec.onerror = function (e) { if (!got) { s.error = (e.error === "not-allowed" || e.error === "service-not-allowed") ? "Accès au micro refusé. Autorise le micro dans le navigateur pour cette page." : "Je n'ai rien entendu, réessaie."; renderFree(); } };
+  try { rec.start(); s.error = "🎙 Micro ouvert, parle maintenant…"; renderFree(); } catch (err) { s.error = "Le micro ne peut pas démarrer."; renderFree(); }
+}
+function renderChat() {
+  var lang = cur, s = chs[lang];
+  if (s.free) return renderFree();
+  var old = document.getElementById("chatin");
   if (old) s.draft = old.value;
   var h = menuHtml() + '<div class="card"><div class="cat">' + LABEL[lang] + ' · conversation guidée</div>';
   if (!s.topic) {
     h += '<div class="fr">Choisis une situation</div>' +
       '<p>Tu joues une vraie scène : le partenaire parle, tu réponds avec tes mots, et ta réponse est corrigée. Tout se passe dans la page, sans compte externe ni frais.</p><div class="btns">' +
-      CHAT_TOPICS.map(function (tp) { return '<button data-act="c-topic" data-topic="' + esc(tp) + '">' + esc(CHAT_TITLES[tp]) + '</button>'; }).join("") + '</div>';
+      CHAT_TOPICS.map(function (tp) { return '<button data-act="c-topic" data-topic="' + esc(tp) + '">' + esc(CHAT_TITLES[tp]) + '</button>'; }).join("") + '</div>' +
+      '<div class="fr" style="margin-top:18px">Ou parle librement avec l\'IA</div><p class="pic-note">Elle te répond à voix haute et te corrige, sur le sujet de ton choix. Elle demande une connexion internet et un quota gratuit.</p><div class="btns">' +
+      CHAT_TOPICS.map(function (tp) { return '<button class="alt" data-act="c-free" data-topic="' + esc(tp) + '">' + esc(tp) + '</button>'; }).join("") + '</div>';
   } else {
     var turns = dialogTurns(lang, s.topic), arCls = lang === "ar" ? " ar" : "";
     h += '<div class="fr">' + esc(CHAT_TITLES[s.topic]) + '</div>' +
@@ -13273,7 +13367,7 @@ function sendChat() {
   s.log.push({ role: "user", text: txt, fb: { state: state, score: r.score, model: r.model } });
   s.scores.push(r.score);
   if (state !== "ok") saveChatCorrections(lang, [{ wrong: txt, right: r.model, why: "Scène « " + CHAT_TITLES[s.topic] + " »" }]);
-  s.turn++; s.showTr = false; s.help = false; s.draft = "";
+  s.turn++; s.showTr = false; s.help = false; s.draft = ""; box.value = "";
   if (s.turn >= turns.length) s.done = true;
   else { s.log.push({ role: "ai", text: turns[s.turn].ai }); speak(lang, turns[s.turn].ai); }
   renderChat();
@@ -13978,12 +14072,18 @@ document.addEventListener("click", function (e) {
   else if (act === "r-retry") { var rr = rd[cur]; rr.phase = "ready"; rr.heard = ""; rr.result = null; render(); }
   else if (act === "r-next") { var rn = rd[cur]; rn.idx = (rn.idx + 1) % TEXTS[cur].length; rn.phase = "ready"; rn.heard = ""; rn.result = null; render(); }
   else if (act === "c-topic") openChat(cur, t.getAttribute("data-topic"));
-  else if (act === "c-topic-change") { chs[cur].topic = null; chs[cur].log = []; chs[cur].draft = ""; renderChat(); }
+  else if (act === "c-topic-change") { chs[cur].topic = null; chs[cur].free = false; chs[cur].log = []; chs[cur].msgs = []; chs[cur].error = ""; chs[cur].draft = ""; renderChat(); }
+  else if (act === "c-free") openFree(cur, t.getAttribute("data-topic"));
+  else if (act === "c-talk") talkFree();
   else if (act === "c-again") openChat(cur, chs[cur].topic);
   else if (act === "c-tr") { chs[cur].showTr = !chs[cur].showTr; renderChat(); }
   else if (act === "c-help") { chs[cur].help = !chs[cur].help; renderChat(); }
-  else if (act === "c-hear") { var cs = chs[cur]; if (cs.topic && !cs.done) speak(cur, dialogTurns(cur, cs.topic)[cs.turn].ai); }
-  else if (act === "c-send") sendChat();
+  else if (act === "c-hear") {
+    var cs = chs[cur];
+    if (cs.free) { for (var hi = cs.msgs.length - 1; hi >= 0; hi--) if (cs.msgs[hi].role === "ai") { speak(cur, cs.msgs[hi].text); break; } }
+    else if (cs.topic && !cs.done) speak(cur, dialogTurns(cur, cs.topic)[cs.turn].ai);
+  }
+  else if (act === "c-send") { if (chs[cur].free) sendFree(); else sendChat(); }
   else if (act === "c-mic") dictate();
   else if (act === "reset") { delete saved[cur]; answered = false; load(cur); render(); }
   else if (act === "go-quiz") { mode[cur] = "quiz"; answered = false; render(); }
