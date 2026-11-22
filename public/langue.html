@@ -12603,14 +12603,65 @@ function cleanForSpeech(lang, s) {
   if (lang === "ar") { var a = t.match(/[\u0600-\u06FF]+/g); return a ? a.join(" ") : t; }
   return t.replace(/\([^)]*\)/g, "").replace(/…/g, " ").replace(/\s+/g, " ").trim();
 }
+// Voix douce, claire, féminine : on choisit la meilleure voix installée sur l'appareil (gratuit, sans service externe)
+var VOICE_KEY = "quiz_voice_v1";
+var VOICE_SAMPLE = {
+  en: "Hello, I am your calm voice. Let's practice together.",
+  es: "Hola, soy tu voz tranquila. Practiquemos juntos.",
+  zh: "你好，我是你的声音。我们一起练习吧。",
+  ar: "مرحباً، أنا صوتك الهادئ. لنتدرب معاً."
+};
+var VOICE_GOOD = /\b(samantha|ava|allison|susan|karen|moira|tessa|serena|zoe|nicky|aria|jenny|emma|joanna|salli|kendra|kimberly|monica|paulina|helena|elena|lucia|laura|sabina|marisol|isabella|esperanza|tingting|ting-ting|meijia|mei-jia|sinji|xiaoxiao|xiaoyi|xiaohan|xiaomeng|huihui|yaoyao|hanhan|laila|zariyah|hoda|salma|amira|zira|hazel|female|femme|femenin[ao]|google us english|google español|google uk english female|mandarin)\b|mónica|lucía|普通话/i;
+var VOICE_BAD = /\b(daniel|alex|fred|jorge|diego|juan|carlos|maged|majed|tarik|naayf|hamed|shakir|male|albert|ralph|bruce|junior|rishi|aaron|gordon|arthur|thomas|david|mark|guy|ryan|eric|jacques|kangkang|yunxi|yunyang|yunjian|liam|james|george|rocko|reed|eddy|grandpa|bad news|bells|boing|bubbles|cellos|deranged|good news|hysterical|jester|organ|trinoids|whisper|wobble|zarvox|bahh|superstar|espeak|robot)\b/i;
+var VOICE_QUALITY = /premium|enhanced|améliorée|mejorada|增强|neural|natural|online|siri|haute qualité|alta calidad/i;
+function voiceScore(v, want) {
+  var n = (v.name || "") + " " + (v.voiceURI || ""), l = String(v.lang || "").replace("_", "-").toLowerCase(), w = want.toLowerCase(), sc = 0;
+  if (l.slice(0, 2) !== w.slice(0, 2)) return -1000;
+  if (VOICE_BAD.test(n)) sc -= 300;
+  if (l === w) sc += 20;
+  if (VOICE_GOOD.test(n)) sc += 60;
+  if (VOICE_QUALITY.test(n)) sc += 40;
+  if (/compact/i.test(n)) sc -= 10;
+  return sc;
+}
+function voiceList(lang) {
+  if (!("speechSynthesis" in window)) return [];
+  var all = window.speechSynthesis.getVoices() || [], want = SPEECH_LANG[lang], out = [];
+  for (var i = 0; i < all.length; i++) { var sc = voiceScore(all[i], want); if (sc > -200) out.push({ v: all[i], sc: sc }); }
+  out.sort(function (a, b) { return b.sc - a.sc; });
+  return out.map(function (o) { return o.v; });
+}
+function pickVoice(lang) {
+  var list = voiceList(lang);
+  if (!list.length) return null;
+  try {
+    var saved = (JSON.parse(localStorage.getItem(VOICE_KEY) || "{}") || {})[lang];
+    if (saved) for (var i = 0; i < list.length; i++) if (list[i].name === saved) return list[i];
+  } catch (e) { /* pas de mémoire locale : on prend la meilleure voix */ }
+  return list[0];
+}
 function speak(lang, text) {
   if (!("speechSynthesis" in window) || !window.SpeechSynthesisUtterance) return false;
   window.speechSynthesis.cancel();
-  var u = new SpeechSynthesisUtterance(cleanForSpeech(lang, text));
-  u.lang = SPEECH_LANG[lang]; u.rate = 0.9;
+  var u = new SpeechSynthesisUtterance(cleanForSpeech(lang, text)), v = pickVoice(lang);
+  u.lang = SPEECH_LANG[lang];
+  if (v) { u.voice = v; u.lang = v.lang; }
+  u.rate = 0.85; u.pitch = 1; u.volume = 1;
   window.speechSynthesis.speak(u);
   return true;
 }
+// Bouton « Changer de voix » : passe à la voix suivante, la fait entendre et la retient
+function voiceNext(lang, btn) {
+  var list = voiceList(lang);
+  if (list.length < 2) { if (btn) btn.textContent = list.length ? "🎧 Une seule voix sur cet appareil" : "🎧 Voix par défaut de l'appareil"; if (list.length) speak(lang, VOICE_SAMPLE[lang]); return; }
+  var cur0 = pickVoice(lang), idx = 0;
+  for (var i = 0; i < list.length; i++) if (list[i] === cur0) idx = i;
+  var nv = list[(idx + 1) % list.length];
+  try { var m = JSON.parse(localStorage.getItem(VOICE_KEY) || "{}") || {}; m[lang] = nv.name; localStorage.setItem(VOICE_KEY, JSON.stringify(m)); } catch (e) { /* choix non mémorisé */ }
+  speak(lang, VOICE_SAMPLE[lang]);
+  if (btn) btn.textContent = "🎧 Voix : " + nv.name.replace(/^(Microsoft|Google)\s+/i, "").slice(0, 22) + " (changer)";
+}
+if ("speechSynthesis" in window && window.speechSynthesis.getVoices) { window.speechSynthesis.getVoices(); }
 
 // ---- Photos réelles (Wikimedia Commons, licences libres) : chargées par le navigateur, affichées après la réponse ----
 var enByFr = {};
@@ -13243,6 +13294,7 @@ function renderFree() {
     '<div class="btns"><button data-act="c-send"' + (s.busy ? " disabled" : "") + '>Envoyer</button>' +
     (canMic ? '<button class="alt" data-act="c-talk"' + (s.busy ? " disabled" : "") + '>🎙 Parler (envoi automatique)</button>' : '') +
     '<button class="alt" data-act="c-hear">🔊 Réécouter</button>' +
+    '<button class="alt" data-act="voice-next">🎧 Changer de voix</button>' +
     '<button class="alt" data-act="c-topic-change">Changer de sujet</button></div></div>';
   document.getElementById("stage").innerHTML = h;
   var log = document.getElementById("chatlog");
@@ -13338,6 +13390,7 @@ function renderChat() {
         '<div class="btns">' + '<button data-act="c-send">Envoyer</button>' +
         (window.SpeechRecognition || window.webkitSpeechRecognition ? '<button class="alt" data-act="c-mic">🎙 Dicter</button>' : '') +
         '<button class="alt" data-act="c-hear">🔊 Réécouter</button>' +
+        '<button class="alt" data-act="voice-next">🎧 Changer de voix</button>' +
         '<button class="alt" data-act="c-tr">' + (s.showTr ? 'Cacher la traduction' : 'Traduction') + '</button>' +
         '<button class="alt" data-act="c-help">' + (s.help ? 'Cacher l\'aide' : '💡 Aide') + '</button></div>';
     } else {
@@ -13870,6 +13923,7 @@ function renderListenMenu() {
     '<p>Sans l\'oreille, on comprend à l\'écrit mais pas quand on te parle. Écoute chaque phrase, puis choisis ce qu\'elle veut dire ou écris-la.</p>' +
     '<div class="btns"><button data-act="dr-start" data-kind="listen">Comprendre : j\'écoute et je choisis le sens</button>' +
     '<button class="alt" data-act="dr-start" data-kind="dictee">' + (typed ? 'Dictée : j\'écoute et j\'écris' : 'Dictée : j\'écoute et je choisis l\'écriture') + '</button></div>' +
+    '<div class="btns"><button class="alt" data-act="voice-next">🎧 Changer de voix</button></div>' +
     '<p class="pic-note">Le son vient de ton navigateur. Mets le volume.</p></div>';
 }
 
@@ -14085,6 +14139,7 @@ document.addEventListener("click", function (e) {
     if (cs.free) { for (var hi = cs.msgs.length - 1; hi >= 0; hi--) if (cs.msgs[hi].role === "ai") { speak(cur, cs.msgs[hi].text); break; } }
     else if (cs.topic && !cs.done) speak(cur, dialogTurns(cur, cs.topic)[cs.turn].ai);
   }
+  else if (act === "voice-next") voiceNext(cur, t);
   else if (act === "c-send") { if (chs[cur].free) sendFree(); else sendChat(); }
   else if (act === "c-mic") dictate();
   else if (act === "reset") { delete saved[cur]; answered = false; load(cur); render(); }
