@@ -88,6 +88,16 @@ document.addEventListener("DOMContentLoaded", function(){
   .tag-ko { color:var(--ko); font-weight:600; }
   .back-espace { display:inline-block; margin:0 0 14px; color:#be185d; text-decoration:none; font-weight:600; font-size:.95rem; }
   .back-espace:hover { text-decoration:underline; }
+  td, th { overflow-wrap:anywhere; }
+  @media (max-width:640px) {
+    main { padding:18px 12px 48px; }
+    .card { padding:16px 14px; }
+    table.stack thead { display:none; }
+    table.stack, table.stack tbody, table.stack tr, table.stack td { display:block; width:100%; }
+    table.stack tr { border:1px solid var(--line); border-radius:12px; padding:8px 12px; margin-bottom:10px; }
+    table.stack td { border:0; padding:3px 0; }
+    table.stack td[data-label]::before { content:attr(data-label) " : "; font-weight:600; color:#9d174d; }
+  }
   .hidden { display:none; }
   .qicon { text-align:center; margin: 4px 0 12px; }
   .qicon svg { width: 150px; height: auto; color: #be185d; background:#fdf2f8; border-radius:14px; padding:8px; }
@@ -148,7 +158,7 @@ document.addEventListener("DOMContentLoaded", function(){
     <h3>Score par thématique</h3>
     <div id="themeScores"></div>
     <h3>Corrigé</h3>
-    <table>
+    <table class="stack">
       <thead><tr><th>#</th><th>Question</th><th>Ta réponse</th><th>Bonne réponse</th><th>Résultat</th></tr></thead>
       <tbody id="review"></tbody>
     </table>
@@ -439,12 +449,12 @@ function renderHistory() {
     const per = Object.entries(s.themes || {}).map(([t, v]) =>
       `<span class="theme-badge" style="${badgeStyle(t)}">${escapeHtml(t)} : ${v.score}/${v.total}</span>`
     ).join(" ");
-    return `<tr><td>${s.date}</td><td><b>${s.score} / ${s.total}</b> (${Math.round(100 * s.score / s.total)} %)</td><td>${per}</td></tr>`;
+    return `<tr><td data-label="Date">${s.date}</td><td data-label="Score"><b>${s.score} / ${s.total}</b> (${Math.round(100 * s.score / s.total)} %)</td><td data-label="Par thématique">${per}</td></tr>`;
   }).join("");
   const best = Math.max(...h.map(s => s.score / s.total));
   $("history").innerHTML =
     `<p>Meilleur score : <b>${Math.round(best * 100)} %</b> sur ${h.length} session(s).</p>
-     <table><thead><tr><th>Date</th><th>Score</th><th>Par thématique</th></tr></thead><tbody>${rows}</tbody></table>`;
+     <table class="stack"><thead><tr><th>Date</th><th>Score</th><th>Par thématique</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 /* Suivi des questions déjà vues : chaque session prend d'abord les moins vues,
@@ -648,11 +658,11 @@ function finishSession() {
   $("review").innerHTML = items.map((it, i) => {
     const ok = it.picked === it.correct;
     return `<tr>
-      <td>${i + 1}</td>
+      <td data-label="N°">${i + 1}</td>
       <td><span class="theme-badge" style="${badgeStyle(it.theme)}">${escapeHtml(it.theme)}</span><br>${escapeHtml(it.q)}</td>
-      <td>${escapeHtml(it.picked ?? "—")}</td>
-      <td>${escapeHtml(it.correct)}</td>
-      <td class="${ok ? "tag-ok" : "tag-ko"}">${ok ? "Juste" : "Faux"}</td>
+      <td data-label="Ta réponse">${escapeHtml(it.picked ?? "—")}</td>
+      <td data-label="Bonne réponse">${escapeHtml(it.correct)}</td>
+      <td data-label="Résultat" class="${ok ? "tag-ok" : "tag-ko"}">${ok ? "Juste" : "Faux"}</td>
     </tr>`;
   }).join("");
 

@@ -145,7 +145,8 @@
 
   @media (max-width:639px){
     .obj-form{flex-direction:column; align-items:stretch;}
-    .obj-form > div{min-width:0;}
+    .obj-form > div{min-width:0; max-width:100%;}
+    .obj-form > label{white-space:normal !important; align-self:stretch !important; max-width:100%; min-width:0;}
     .obj-form input, .obj-form button, .obj-form select, .obj-form .hours-input{width:100%;}
     .obj-form .hours-input input{width:100%; flex:1;}
 
