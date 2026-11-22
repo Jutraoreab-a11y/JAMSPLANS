@@ -2,8 +2,8 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "JAMAL",
-  description: "JAMAL : JamsPlans, JAMAL PERMIS, Langue.",
+  title: "FAMAL",
+  description: "FAMAL : JamsPlans, JAMAL PERMIS, Langue.",
 };
 
 export const viewport: Viewport = {

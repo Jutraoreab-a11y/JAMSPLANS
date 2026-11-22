@@ -5,7 +5,7 @@ import { createClient } from "@supabase/supabase-js";
 import "../hub.css";
 
 // Page ouverte par le lien du mail « Mot de passe oublié » :
-// nouveau mot de passe + confirmation, puis retour à JAMAL (connecté).
+// nouveau mot de passe + confirmation, puis retour à FAMAL (connecté).
 //
 // Deux types de liens sont acceptés :
 //  - le lien Supabase classique (le jeton arrive dans l'adresse après #) ;
@@ -94,7 +94,7 @@ export default function NewPasswordPage() {
     <div className="hub">
       <div className="wrap">
         <div className="top">
-          <div className="brand"><span className="brand-dot">J</span> JAMAL</div>
+          <div className="brand"><span className="brand-dot">F</span> FAMAL</div>
         </div>
 
         <section className="login" style={{ margin: "40px auto" }}>
@@ -128,7 +128,7 @@ export default function NewPasswordPage() {
                 {sent && <p className="info">{sent}</p>}
                 <button className="go" type="submit" disabled={busy}>{busy ? "Envoi…" : "Recevoir un nouveau lien"}</button>
               </form>
-              <p className="more"><a href="/">Retour à JAMAL</a></p>
+              <p className="more"><a href="/">Retour à FAMAL</a></p>
             </>
           )}
 

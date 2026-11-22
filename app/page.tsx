@@ -9,7 +9,7 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 const supabase = SUPABASE_URL && SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: true, detectSessionInUrl: false } }) : null;
 
-// Page d'accueil « JAMAL » : un bouton par module.
+// Page d'accueil « FAMAL » : un bouton par module.
 //  - JamsPlans    -> /jamsplans   (app/jamsplans/page.tsx)
 //  - JAMAL PERMIS -> /permis      (public/permis.html, via rewrite dans next.config.js)
 //  - Langue       -> /langue      (public/langue.html, via rewrite dans next.config.js)
@@ -129,7 +129,7 @@ export default function Home() {
     <div className="hub">
       <div className="wrap">
         <div className="top">
-          <div className="brand"><span className="brand-dot">J</span> JAMAL</div>
+          <div className="brand"><span className="brand-dot">F</span> FAMAL</div>
           <div className="session">
             <span suppressHydrationWarning style={{ textTransform: "capitalize" }}>{today}</span>
             {user && (
@@ -208,7 +208,7 @@ export default function Home() {
           <div className="value"><i>📱</i><div><b>Partout avec toi</b><span>Sur téléphone comme sur ordinateur.</span></div></div>
         </section>
 
-        <footer>JAMAL · Upgrade — fait pour avancer, un jour après l'autre.</footer>
+        <footer>FAMAL · Upgrade — fait pour avancer, un jour après l'autre.</footer>
       </div>
 
       <div className={"toast" + (toast ? " show" : "")} role="status" aria-live="polite">{toast}</div>
