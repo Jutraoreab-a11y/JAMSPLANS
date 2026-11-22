@@ -4336,8 +4336,8 @@ export function initJamsPlansApp() {
   // SALUTATION + PROFIL
   // =========================================================
   function renderGreeting(){
-    const name = state.profile.firstName.trim();
-    document.getElementById("greeting").textContent = name ? `Hello ${name}` : "Hello";
+    // Le prénom n'est plus affiché ici : on garde seulement « Hello ».
+    document.getElementById("greeting").textContent = "Hello";
   }
 
   // Sélecteur d'année dans l'en-tête : chaque année a ses objectifs — on
