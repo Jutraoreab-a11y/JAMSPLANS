@@ -16,7 +16,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const LANGS: Record<string, string> = { en: 'anglais', es: 'espagnol', zh: 'mandarin (caractères simplifiés, avec le pinyin entre parenthèses)', ar: 'arabe standard (avec la translittération entre parenthèses)' };
-const MODELS = ['gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gemini-2.0-flash'];
+const MODELS = ['gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.1-flash-lite'];
 const MAX_PER_HOUR = 60;
 const hits = new Map<string, number[]>();
 
@@ -83,7 +83,7 @@ export async function POST(request: Request) {
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: system }] },
           contents,
-          generationConfig: { maxOutputTokens: 600, temperature: 0.7, responseMimeType: 'application/json' },
+          generationConfig: { maxOutputTokens: 1200, responseMimeType: 'application/json' },
         }),
       });
       lastStatus = resp.status;
@@ -94,7 +94,7 @@ export async function POST(request: Request) {
         continue;
       }
       console.error('Gemini', model, resp.status, (await resp.text().catch(() => '')).slice(0, 300));
-      if (resp.status === 400 || resp.status === 401 || resp.status === 403) break; // clé ou requête invalide : inutile d'essayer les autres
+      if (resp.status === 401 || resp.status === 403) break; // clé invalide : inutile d'essayer les autres
     }
     if (!text) {
       return NextResponse.json({ error: 'Le service gratuit est indisponible ou son quota est atteint.' }, { status: lastStatus === 429 ? 429 : 502 });
