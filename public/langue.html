@@ -12888,8 +12888,6 @@ var TEXTS = {
     { theme: "الحياة اليومية", title: "صباحي", text: "أستيقظ كل صباح في السابعة وأشرب كوباً من الماء. أركب الحافلة إلى العمل وتستغرق نحو عشرين دقيقة. في منتصف النهار آكل عادةً ساندويتش على مكتبي، وفي المساء أطبخ وجبة بسيطة بالخضار." }
   ]
 };
-var CHAT_API = "/api/chat";
-var CHAT_TOPICS = ["Finance", "Animaux", "Vie quotidienne", "Voyage"];
 var rd = {}, chs = {};
 
 // ---- Suivi du temps : écrit (quiz, tests) et oral (lecture, conversation), par jour et par langue ----
@@ -13066,76 +13064,221 @@ function finishReading() {
   render();
 }
 
-// ---- Conversation avec une IA sur un sujet choisi (le serveur tient la clé API) ----
+// ---- Conversation guidée : scènes jouées tour à tour, 100 % dans la page (aucun service externe, aucun coût) ----
+// Chaque scène : le partenaire parle, tu réponds ; ta réponse est comparée aux réponses possibles.
+// Format : [réplique du partenaire, réponse possible 1, réponse possible 2]. À faire relire par un natif (mandarin, arabe).
+var CHAT_TOPICS = ["Voyage", "Vie quotidienne", "Finance", "Animaux"];
+var CHAT_TITLES = { "Voyage": "Voyage · À l'hôtel", "Vie quotidienne": "Vie quotidienne · Au café", "Finance": "Finance · À la banque", "Animaux": "Animaux · Chez le vétérinaire" };
+var DLG_FR = {
+  "Voyage": ["Bonsoir ! Bienvenue dans notre hôtel. Avez-vous une réservation ?", "Comment vous appelez-vous, s'il vous plaît ?", "Souhaitez-vous une chambre avec vue sur la mer ?", "Le petit déjeuner est de sept à dix heures. Cela vous convient ?", "Voici votre clé. Avez-vous besoin d'autre chose ?"],
+  "Vie quotidienne": ["Bonjour ! Que souhaitez-vous boire ?", "Voulez-vous quelque chose à manger ?", "D'accord. Sur place ou à emporter ?", "Cela fait quatre euros cinquante.", "Merci ! Bonne journée."],
+  "Finance": ["Bonjour. Comment puis-je vous aider ?", "Bien sûr. Avez-vous une pièce d'identité ?", "Voulez-vous un compte d'épargne ou un compte courant ?", "Vous recevrez votre carte dans une semaine. Cela vous convient ?", "Puis-je vous aider pour autre chose ?"],
+  "Animaux": ["Bonjour ! Comment s'appelle votre animal ?", "Quel genre d'animal est-ce ?", "Quel âge a-t-il ?", "Quel est le problème aujourd'hui ?", "Ne vous inquiétez pas. Donnez-lui de l'eau et revenez dans deux jours."]
+};
+var DLG = {
+  en: {
+    "Voyage": [
+      ["Good evening! Welcome to our hotel. Do you have a reservation?", "Yes, I have a reservation.", "Yes, I booked a room for two nights."],
+      ["What is your name, please?", "My name is Marie.", "I am Marie Martin."],
+      ["Would you like a room with a view of the sea?", "Yes, I would like a room with a sea view, please.", "No, thank you. A quiet room is fine."],
+      ["Breakfast is from seven to ten. Is that all right?", "Yes, that is fine, thank you.", "Yes, that is perfect."],
+      ["Here is your key. Do you need anything else?", "No, thank you. Have a good evening.", "Could you tell me where the elevator is?"]
+    ],
+    "Vie quotidienne": [
+      ["Hello! What would you like to drink?", "I would like a coffee, please.", "A coffee with milk, please."],
+      ["Would you like something to eat?", "Yes, a croissant, please.", "No, thank you. Just the coffee."],
+      ["Sure. For here or to take away?", "For here, please.", "To take away, please."],
+      ["That is four euros fifty.", "Can I pay by card?", "Here you are. Keep the change."],
+      ["Thank you! Have a nice day.", "Thank you, you too.", "Thanks, goodbye."]
+    ],
+    "Finance": [
+      ["Good morning. How can I help you?", "I would like to open a bank account.", "I want to open an account, please."],
+      ["Of course. Do you have an identity card?", "Yes, here is my identity card.", "Yes, I have my passport."],
+      ["Do you want a savings account or a current account?", "A current account, please.", "I would like a savings account."],
+      ["You will receive your card in one week. Is that all right?", "Yes, that is fine.", "Yes, thank you very much."],
+      ["Is there anything else I can do for you?", "No, that is all, thank you.", "How much does the card cost?"]
+    ],
+    "Animaux": [
+      ["Hello! What is your pet's name?", "His name is Max.", "Her name is Luna."],
+      ["What kind of animal is it?", "He is a dog.", "She is a cat."],
+      ["How old is he?", "He is three years old.", "She is two years old."],
+      ["What is the problem today?", "He does not want to eat.", "She has been coughing since yesterday."],
+      ["Don't worry. Give him water and come back in two days.", "Thank you very much, doctor.", "Okay, I will come back in two days."]
+    ]
+  },
+  es: {
+    "Voyage": [
+      ["¡Buenas noches! Bienvenido a nuestro hotel. ¿Tiene una reserva?", "Sí, tengo una reserva.", "Sí, reservé una habitación para dos noches."],
+      ["¿Cómo se llama, por favor?", "Me llamo Marie.", "Mi nombre es Marie."],
+      ["¿Quiere una habitación con vista al mar?", "Sí, quisiera una habitación con vista al mar, por favor.", "No, gracias. Una habitación tranquila está bien."],
+      ["El desayuno es de siete a diez. ¿Le parece bien?", "Sí, me parece bien, gracias.", "Sí, perfecto."],
+      ["Aquí tiene su llave. ¿Necesita algo más?", "No, gracias. Buenas noches.", "¿Puede decirme dónde está el ascensor?"]
+    ],
+    "Vie quotidienne": [
+      ["¡Hola! ¿Qué desea beber?", "Quisiera un café, por favor.", "Un café con leche, por favor."],
+      ["¿Desea algo de comer?", "Sí, un cruasán, por favor.", "No, gracias. Solo el café."],
+      ["Claro. ¿Para tomar aquí o para llevar?", "Para tomar aquí, por favor.", "Para llevar, por favor."],
+      ["Son cuatro euros con cincuenta.", "¿Puedo pagar con tarjeta?", "Aquí tiene. Quédese con el cambio."],
+      ["¡Gracias! Que tenga un buen día.", "Gracias, igualmente.", "Gracias, adiós."]
+    ],
+    "Finance": [
+      ["Buenos días. ¿En qué puedo ayudarle?", "Quisiera abrir una cuenta bancaria.", "Quiero abrir una cuenta, por favor."],
+      ["Por supuesto. ¿Tiene un documento de identidad?", "Sí, aquí tiene mi documento de identidad.", "Sí, tengo mi pasaporte."],
+      ["¿Quiere una cuenta de ahorros o una cuenta corriente?", "Una cuenta corriente, por favor.", "Quisiera una cuenta de ahorros."],
+      ["Recibirá su tarjeta en una semana. ¿Le parece bien?", "Sí, me parece bien.", "Sí, muchas gracias."],
+      ["¿Puedo ayudarle en algo más?", "No, eso es todo, gracias.", "¿Cuánto cuesta la tarjeta?"]
+    ],
+    "Animaux": [
+      ["¡Hola! ¿Cómo se llama su mascota?", "Se llama Max.", "Se llama Luna."],
+      ["¿Qué tipo de animal es?", "Es un perro.", "Es una gata."],
+      ["¿Cuántos años tiene?", "Tiene tres años.", "Tiene dos años."],
+      ["¿Cuál es el problema hoy?", "No quiere comer.", "Tose desde ayer."],
+      ["No se preocupe. Dele agua y vuelva en dos días.", "Muchas gracias, doctor.", "De acuerdo, volveré en dos días."]
+    ]
+  },
+  zh: {
+    "Voyage": [
+      ["晚上好！欢迎光临。您有预订吗？ wǎnshang hǎo! huānyíng guānglín. nín yǒu yùdìng ma", "有，我订了房间。 yǒu, wǒ dìng le fángjiān", "有，我订了两晚。 yǒu, wǒ dìng le liǎng wǎn"],
+      ["请问您贵姓？ qǐngwèn nín guìxìng", "我叫玛丽。 wǒ jiào Mǎlì", "我的名字是玛丽。 wǒ de míngzi shì Mǎlì"],
+      ["您想要海景房吗？ nín xiǎng yào hǎijǐng fáng ma", "想，我要一间海景房。 xiǎng, wǒ yào yì jiān hǎijǐng fáng", "不用了，安静的房间就可以。 bú yòng le, ānjìng de fángjiān jiù kěyǐ"],
+      ["早餐从七点到十点。可以吗？ zǎocān cóng qī diǎn dào shí diǎn. kěyǐ ma", "可以，谢谢。 kěyǐ, xièxie", "很好，没问题。 hěn hǎo, méi wèntí"],
+      ["这是您的房卡。还需要别的吗？ zhè shì nín de fángkǎ. hái xūyào bié de ma", "不用了，谢谢。晚安。 bú yòng le, xièxie. wǎn'ān", "请问电梯在哪里？ qǐngwèn diàntī zài nǎlǐ"]
+    ],
+    "Vie quotidienne": [
+      ["你好！您想喝点什么？ nǐ hǎo! nín xiǎng hē diǎn shénme", "我想要一杯咖啡。 wǒ xiǎng yào yì bēi kāfēi", "请给我一杯拿铁。 qǐng gěi wǒ yì bēi nátiě"],
+      ["要吃点什么吗？ yào chī diǎn shénme ma", "要，一个牛角面包。 yào, yí ge niújiǎo miànbāo", "不用了，只要咖啡。 bú yòng le, zhǐ yào kāfēi"],
+      ["好的。在这里吃还是带走？ hǎo de. zài zhèlǐ chī háishi dàizǒu", "在这里吃。 zài zhèlǐ chī", "带走，谢谢。 dàizǒu, xièxie"],
+      ["一共四欧五十分。 yígòng sì ōu wǔshí fēn", "可以刷卡吗？ kěyǐ shuākǎ ma", "给你，不用找了。 gěi nǐ, bú yòng zhǎo le"],
+      ["谢谢！祝您今天愉快。 xièxie! zhù nín jīntiān yúkuài", "谢谢，你也是。 xièxie, nǐ yě shì", "谢谢，再见。 xièxie, zàijiàn"]
+    ],
+    "Finance": [
+      ["早上好。有什么可以帮您？ zǎoshang hǎo. yǒu shénme kěyǐ bāng nín", "我想开一个银行账户。 wǒ xiǎng kāi yí ge yínháng zhànghù", "请帮我开一个账户。 qǐng bāng wǒ kāi yí ge zhànghù"],
+      ["好的。您带身份证了吗？ hǎo de. nín dài shēnfènzhèng le ma", "带了，这是我的身份证。 dài le, zhè shì wǒ de shēnfènzhèng", "带了，我有护照。 dài le, wǒ yǒu hùzhào"],
+      ["您想开储蓄账户还是活期账户？ nín xiǎng kāi chǔxù zhànghù háishi huóqī zhànghù", "活期账户，谢谢。 huóqī zhànghù, xièxie", "我想开储蓄账户。 wǒ xiǎng kāi chǔxù zhànghù"],
+      ["您的银行卡一周后寄到。可以吗？ nín de yínhángkǎ yì zhōu hòu jìdào. kěyǐ ma", "可以，没问题。 kěyǐ, méi wèntí", "好的，非常感谢。 hǎo de, fēicháng gǎnxiè"],
+      ["还有什么可以帮您的吗？ hái yǒu shénme kěyǐ bāng nín de ma", "没有了，谢谢。 méiyǒu le, xièxie", "银行卡要多少钱？ yínhángkǎ yào duōshao qián"]
+    ],
+    "Animaux": [
+      ["你好！您的宠物叫什么名字？ nǐ hǎo! nín de chǒngwù jiào shénme míngzi", "它叫麦克斯。 tā jiào Màikèsī", "它叫露娜。 tā jiào Lùnà"],
+      ["它是什么动物？ tā shì shénme dòngwù", "它是一只狗。 tā shì yì zhī gǒu", "它是一只猫。 tā shì yì zhī māo"],
+      ["它几岁了？ tā jǐ suì le", "它三岁了。 tā sān suì le", "它两岁了。 tā liǎng suì le"],
+      ["今天它有什么问题？ jīntiān tā yǒu shénme wèntí", "它不想吃东西。 tā bù xiǎng chī dōngxi", "它从昨天开始咳嗽。 tā cóng zuótiān kāishǐ késou"],
+      ["别担心。给它喝水，两天后再来。 bié dānxīn. gěi tā hē shuǐ, liǎng tiān hòu zài lái", "非常感谢，医生。 fēicháng gǎnxiè, yīshēng", "好的，两天后我再来。 hǎo de, liǎng tiān hòu wǒ zài lái"]
+    ]
+  },
+  ar: {
+    "Voyage": [
+      ["مساء الخير! أهلاً بكم في فندقنا. هل لديك حجز؟ masāʾ al-khayr! ahlan bikum fī funduqinā. hal ladayka ḥajz", "نعم، لدي حجز. naʿam, ladayya ḥajz", "نعم، حجزت غرفة لليلتين. naʿam, ḥajaztu ghurfa lil-laylatayn"],
+      ["ما اسمك من فضلك؟ mā ismuka min faḍlika", "اسمي ماري. ismī Mārī", "أنا ماري. anā Mārī"],
+      ["هل تريد غرفة بإطلالة على البحر؟ hal turīd ghurfa bi-iṭlāla ʿalā al-baḥr", "نعم، أريد غرفة بإطلالة على البحر من فضلك. naʿam, urīd ghurfa bi-iṭlāla ʿalā al-baḥr min faḍlika", "لا، شكراً. غرفة هادئة تكفي. lā, shukran. ghurfa hādiʾa takfī"],
+      ["الفطور من السابعة إلى العاشرة. هل هذا مناسب؟ al-fuṭūr min al-sābiʿa ilā al-ʿāshira. hal hādhā munāsib", "نعم، هذا مناسب، شكراً. naʿam, hādhā munāsib, shukran", "نعم، ممتاز. naʿam, mumtāz"],
+      ["تفضل مفتاح غرفتك. هل تحتاج إلى شيء آخر؟ tafaḍḍal miftāḥ ghurfatika. hal taḥtāj ilā shayʾ ākhar", "لا، شكراً. تصبح على خير. lā, shukran. tuṣbiḥ ʿalā khayr", "أين المصعد من فضلك؟ ayna al-miṣʿad min faḍlika"]
+    ],
+    "Vie quotidienne": [
+      ["مرحباً! ماذا تريد أن تشرب؟ marḥaban! mādhā turīd an tashrab", "أريد قهوة من فضلك. urīd qahwa min faḍlika", "قهوة بالحليب من فضلك. qahwa bil-ḥalīb min faḍlika"],
+      ["هل تريد شيئاً تأكله؟ hal turīd shayʾan taʾkuluh", "نعم، كرواسون من فضلك. naʿam, krūsān min faḍlika", "لا، شكراً. القهوة فقط. lā, shukran. al-qahwa faqaṭ"],
+      ["حسناً. هنا أم للأخذ؟ ḥasanan. hunā am lil-akhdh", "هنا من فضلك. hunā min faḍlika", "للأخذ من فضلك. lil-akhdh min faḍlika"],
+      ["الحساب أربعة يورو وخمسون سنتاً. al-ḥisāb arbaʿa yūrū wa-khamsūn sintan", "هل يمكنني الدفع بالبطاقة؟ hal yumkinunī al-dafʿ bil-biṭāqa", "تفضل. احتفظ بالباقي. tafaḍḍal. iḥtafiẓ bil-bāqī"],
+      ["شكراً لك! يوماً سعيداً. shukran laka! yawman saʿīdan", "شكراً، وأنت أيضاً. shukran, wa-anta ayḍan", "شكراً، مع السلامة. shukran, maʿa al-salāma"]
+    ],
+    "Finance": [
+      ["صباح الخير. كيف يمكنني مساعدتك؟ ṣabāḥ al-khayr. kayfa yumkinunī musāʿadatuka", "أريد فتح حساب مصرفي. urīd fatḥ ḥisāb maṣrifī", "أريد فتح حساب من فضلك. urīd fatḥ ḥisāb min faḍlika"],
+      ["بالطبع. هل لديك بطاقة هوية؟ bil-ṭabʿ. hal ladayka biṭāqat huwiyya", "نعم، هذه بطاقة هويتي. naʿam, hādhihi biṭāqat huwiyyatī", "نعم، معي جواز السفر. naʿam, maʿī jawāz al-safar"],
+      ["هل تريد حساب توفير أم حساباً جارياً؟ hal turīd ḥisāb tawfīr am ḥisāban jāriyan", "حساباً جارياً من فضلك. ḥisāban jāriyan min faḍlika", "أريد حساب توفير. urīd ḥisāb tawfīr"],
+      ["ستصلك البطاقة بعد أسبوع. هل هذا مناسب؟ sa-taṣiluka al-biṭāqa baʿd usbūʿ. hal hādhā munāsib", "نعم، هذا مناسب. naʿam, hādhā munāsib", "نعم، شكراً جزيلاً. naʿam, shukran jazīlan"],
+      ["هل يمكنني مساعدتك في شيء آخر؟ hal yumkinunī musāʿadatuka fī shayʾ ākhar", "لا، هذا كل شيء، شكراً. lā, hādhā kull shayʾ, shukran", "كم تكلف البطاقة؟ kam tukallif al-biṭāqa"]
+    ],
+    "Animaux": [
+      ["مرحباً! ما اسم حيوانك الأليف؟ marḥaban! mā ism ḥayawānika al-alīf", "اسمه ماكس. ismuhu Māks", "اسمها لونا. ismuhā Lūnā"],
+      ["أي نوع من الحيوانات هو؟ ayy nawʿ min al-ḥayawānāt huwa", "إنه كلب. innahu kalb", "إنها قطة. innahā qiṭṭa"],
+      ["كم عمره؟ kam ʿumruhu", "عمره ثلاث سنوات. ʿumruhu thalāth sanawāt", "عمرها سنتان. ʿumruhā sanatān"],
+      ["ما المشكلة اليوم؟ mā al-mushkila al-yawm", "لا يريد أن يأكل. lā yurīd an yaʾkul", "تسعل منذ أمس. tasʿul mundhu amsi"],
+      ["لا تقلق. أعطه ماءً وعد بعد يومين. lā taqlaq. aʿṭihi māʾan wa-ʿud baʿd yawmayn", "شكراً جزيلاً يا دكتور. shukran jazīlan yā duktūr", "حسناً، سأعود بعد يومين. ḥasanan, sa-aʿūd baʿd yawmayn"]
+    ]
+  }
+};
+function dialogTurns(lang, topic) {
+  var raw = DLG[lang][topic] || [], fr = DLG_FR[topic] || [];
+  return raw.map(function (r, i) { return { ai: r[0], fr: fr[i] || "", ok: r.slice(1) }; });
+}
+// Compare ce que tu as écrit aux réponses possibles ; garde la meilleure
+function evalAnswer(lang, typed, variants) {
+  var best = -1, model = variants[0], cjk = (lang === "zh" || lang === "ar");
+  variants.forEach(function (v) {
+    var ref = cjk ? cleanForSpeech(lang, v) : foldTxt(v), got = cjk ? typed : foldTxt(typed);
+    var sc = compareReading(lang, ref, got).score;
+    if (sc > best) { best = sc; model = v; }
+  });
+  return { score: Math.max(0, best), model: model };
+}
 function renderChat() {
-  var lang = cur, s = chs[lang] || (chs[lang] = { topic: null, msgs: [], busy: false, error: "" });
-  var h = menuHtml() + '<div class="card"><div class="cat">' + LABEL[lang] + ' · conversation</div>';
+  var lang = cur, s = chs[lang], old = document.getElementById("chatin");
+  if (old) s.draft = old.value;
+  var h = menuHtml() + '<div class="card"><div class="cat">' + LABEL[lang] + ' · conversation guidée</div>';
   if (!s.topic) {
-    h += '<div class="fr">Choisis un sujet</div><div class="btns">' +
-      CHAT_TOPICS.map(function (tp) { return '<button data-act="c-topic" data-topic="' + esc(tp) + '">' + esc(tp) + '</button>'; }).join("") +
-      '</div>';
+    h += '<div class="fr">Choisis une situation</div>' +
+      '<p>Tu joues une vraie scène : le partenaire parle, tu réponds avec tes mots, et ta réponse est corrigée. Tout se passe dans la page, sans compte externe ni frais.</p><div class="btns">' +
+      CHAT_TOPICS.map(function (tp) { return '<button data-act="c-topic" data-topic="' + esc(tp) + '">' + esc(CHAT_TITLES[tp]) + '</button>'; }).join("") + '</div>';
   } else {
-    h += '<div class="fr">Sujet : ' + esc(s.topic) + '</div><div class="chat" id="chatlog">';
-    for (var i = 0; i < s.msgs.length; i++) {
-      var m = s.msgs[i];
-      h += '<div class="msg ' + m.role + (lang === "ar" ? " ar" : "") + '">' + esc(m.text) + '</div>';
-      if (m.corrections && m.corrections.length) {
-        h += '<div class="fb-list">' + m.corrections.map(function (c) {
-          return '<p><strong>' + esc(c.wrong) + '</strong> → <strong>' + esc(c.right) + '</strong> · ' + esc(c.why || "") + '</p>';
-        }).join("") + '</div>';
+    var turns = dialogTurns(lang, s.topic), arCls = lang === "ar" ? " ar" : "";
+    h += '<div class="fr">' + esc(CHAT_TITLES[s.topic]) + '</div>' +
+      (s.done ? '' : '<p class="pic-note">Échange ' + (s.turn + 1) + ' sur ' + turns.length + '</p>') + '<div class="chat" id="chatlog">';
+    for (var i = 0; i < s.log.length; i++) {
+      var m = s.log[i];
+      h += '<div class="msg ' + m.role + arCls + '">' + esc(m.text) + '</div>';
+      if (m.fb) {
+        var f = m.fb;
+        h += '<div class="fb-list"><p>' + (f.state === "ok" ? '<span class="fb-ok">✔ Très bien (' + f.score + ' %)</span>' :
+          (f.state === "near" ? 'Presque (' + f.score + ' %). ' : 'Pas tout à fait. ') + 'Une réponse possible : <strong>' + esc(f.model) + '</strong>') +
+          (f.state === "ok" ? '' : '') + '</p></div>';
       }
     }
-    if (s.busy) h += '<p class="pic-note">…</p>';
-    if (s.error) h += '<p class="fb-err">' + esc(s.error) + '</p>';
-    h += '</div><textarea id="chatin" rows="2" placeholder="Écris ou dicte ta réponse"' + (s.busy ? " disabled" : "") + '></textarea>' +
-      '<div class="btns">' + (window.SpeechRecognition || window.webkitSpeechRecognition ? '<button class="alt" data-act="c-mic">🎙 Dicter</button>' : '') +
-      '<button data-act="c-send"' + (s.busy ? " disabled" : "") + '>Envoyer</button>' +
-      '<button class="alt" data-act="c-topic-change">Changer de sujet</button></div>';
+    h += '</div>';
+    if (!s.done) {
+      var t = turns[s.turn];
+      if (s.showTr) h += '<p class="pic-note">' + esc(t.fr) + '</p>';
+      if (s.help) h += '<div class="fb-list"><p>Réponses possibles :</p>' + t.ok.map(function (v) { return '<p><strong>' + esc(v) + '</strong></p>'; }).join("") + '</div>';
+      h += '<textarea id="chatin" rows="2" placeholder="Écris ou dicte ta réponse">' + esc(s.draft || "") + '</textarea>' +
+        '<div class="btns">' + '<button data-act="c-send">Envoyer</button>' +
+        (window.SpeechRecognition || window.webkitSpeechRecognition ? '<button class="alt" data-act="c-mic">🎙 Dicter</button>' : '') +
+        '<button class="alt" data-act="c-hear">🔊 Réécouter</button>' +
+        '<button class="alt" data-act="c-tr">' + (s.showTr ? 'Cacher la traduction' : 'Traduction') + '</button>' +
+        '<button class="alt" data-act="c-help">' + (s.help ? 'Cacher l\'aide' : '💡 Aide') + '</button></div>';
+    } else {
+      var sum = 0;
+      s.scores.forEach(function (x) { sum += Math.min(100, x); });
+      var avg = Math.round(sum / Math.max(1, s.scores.length));
+      h += '<div class="verdict">Scène terminée : ' + avg + ' %</div><p>' +
+        (avg >= 80 ? 'Très bien joué ! Tu tiens une vraie conversation.' : (avg >= 50 ? 'Bon début. Tes fautes sont dans le cahier d\'erreurs.' : 'Pas grave : refais la scène, elle sera plus facile.')) + '</p>' +
+        '<div class="btns"><button data-act="c-again">Refaire la scène</button><button class="alt" data-act="c-topic-change">Autre situation</button><button class="alt" data-act="go-book">Cahier d\'erreurs</button></div>';
+    }
+    if (!s.done) h += '<div class="btns"><button class="alt" data-act="c-topic-change">Changer de situation</button></div>';
   }
   h += '</div>';
   document.getElementById("stage").innerHTML = h;
   var log = document.getElementById("chatlog");
   if (log) log.scrollTop = log.scrollHeight;
 }
-function chatCall(lang, s, history) {
-  s.busy = true; s.error = ""; renderChat();
-  return fetch(CHAT_API, {
-    method: "POST", headers: { "Content-Type": "application/json", "Authorization": "Bearer " + chatToken() },
-    body: JSON.stringify({ lang: lang, topic: s.topic, messages: history })
-  }).then(function (r) {
-    if (!r.ok) { var er = new Error("status " + r.status); er.status = r.status; throw er; }
-    return r.json();
-  }).then(function (d) {
-    s.busy = false;
-    if (d.corrections && d.corrections.length) {
-      saveChatCorrections(lang, d.corrections);
-      for (var u = s.msgs.length - 1; u >= 0; u--) if (s.msgs[u].role === "user") { s.msgs[u].corrections = d.corrections; break; }
-    }
-    s.msgs.push({ role: "ai", text: d.reply || "" });
-    if (d.reply) speak(lang, d.reply);
-    renderChat();
-  }).catch(function (err) {
-    s.busy = false;
-    s.error = err && err.status === 401 ? "Ta session a expiré : reconnecte-toi depuis l'accueil FAMAL puis reviens ici."
-      : (err && err.status === 503 ? "La conversation n'est pas encore activée sur le serveur (clé ANTHROPIC_API_KEY à ajouter dans Vercel)."
-      : (err && err.status === 429 ? "Trop de messages pour le moment, réessaie dans quelques minutes." : "Le serveur de conversation ne répond pas. Réessaie dans un instant."));
-    renderChat();
-  });
-}
 function openChat(lang, topic) {
-  var s = chs[lang] || (chs[lang] = { topic: null, msgs: [], busy: false, error: "" });
-  s.topic = topic; s.msgs = [];
-  chatCall(lang, s, []);
+  var s = chs[lang], turns = dialogTurns(lang, topic);
+  s.topic = topic; s.turn = 0; s.log = [{ role: "ai", text: turns[0].ai }]; s.scores = []; s.done = false; s.showTr = false; s.help = false; s.draft = "";
+  speak(lang, turns[0].ai);
+  renderChat();
 }
 function sendChat() {
-  var lang = cur, s = chs[lang], box = document.getElementById("chatin");
-  var txt = box ? box.value.trim() : "";
-  if (!txt || s.busy) return;
-  var user = { role: "user", text: txt, corrections: [] };
-  s.msgs.push(user);
-  var history = s.msgs.map(function (m) { return { role: m.role === "ai" ? "assistant" : "user", content: m.text }; });
-  chatCall(lang, s, history);
+  var lang = cur, s = chs[lang], box = document.getElementById("chatin"), txt = box ? box.value.trim() : "";
+  if (!txt || s.done || !s.topic) return;
+  var turns = dialogTurns(lang, s.topic), r = evalAnswer(lang, txt, turns[s.turn].ok);
+  var state = r.score >= 65 ? "ok" : (r.score >= 35 ? "near" : "ko");
+  s.log.push({ role: "user", text: txt, fb: { state: state, score: r.score, model: r.model } });
+  s.scores.push(r.score);
+  if (state !== "ok") saveChatCorrections(lang, [{ wrong: txt, right: r.model, why: "Scène « " + CHAT_TITLES[s.topic] + " »" }]);
+  s.turn++; s.showTr = false; s.help = false; s.draft = "";
+  if (s.turn >= turns.length) s.done = true;
+  else { s.log.push({ role: "ai", text: turns[s.turn].ai }); speak(lang, turns[s.turn].ai); }
+  renderChat();
 }
+
 function dictate() {
   var R = window.SpeechRecognition || window.webkitSpeechRecognition;
   var rec = new R();
@@ -13687,15 +13830,6 @@ function saveChatCorrections(lang, list) {
   x.chat = x.chat.slice(0, 40);
   saveX();
 }
-function chatToken() {
-  try {
-    for (var i = 0; i < localStorage.length; i++) {
-      var k = localStorage.key(i);
-      if (/^sb-.*-auth-token$/.test(k)) { var v = JSON.parse(localStorage.getItem(k)); return v && (v.access_token || (v.currentSession && v.currentSession.access_token)) || ""; }
-    }
-  } catch (e) { /* pas de session lisible */ }
-  return "";
-}
 
 // ---- Affichage ----
 function menuHtml() {
@@ -13844,7 +13978,11 @@ document.addEventListener("click", function (e) {
   else if (act === "r-retry") { var rr = rd[cur]; rr.phase = "ready"; rr.heard = ""; rr.result = null; render(); }
   else if (act === "r-next") { var rn = rd[cur]; rn.idx = (rn.idx + 1) % TEXTS[cur].length; rn.phase = "ready"; rn.heard = ""; rn.result = null; render(); }
   else if (act === "c-topic") openChat(cur, t.getAttribute("data-topic"));
-  else if (act === "c-topic-change") { chs[cur].topic = null; chs[cur].msgs = []; chs[cur].error = ""; renderChat(); }
+  else if (act === "c-topic-change") { chs[cur].topic = null; chs[cur].log = []; chs[cur].draft = ""; renderChat(); }
+  else if (act === "c-again") openChat(cur, chs[cur].topic);
+  else if (act === "c-tr") { chs[cur].showTr = !chs[cur].showTr; renderChat(); }
+  else if (act === "c-help") { chs[cur].help = !chs[cur].help; renderChat(); }
+  else if (act === "c-hear") { var cs = chs[cur]; if (cs.topic && !cs.done) speak(cur, dialogTurns(cur, cs.topic)[cs.turn].ai); }
   else if (act === "c-send") sendChat();
   else if (act === "c-mic") dictate();
   else if (act === "reset") { delete saved[cur]; answered = false; load(cur); render(); }
